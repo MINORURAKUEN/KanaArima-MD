@@ -3,7 +3,7 @@ import axios from "axios"
 import uploadImage from "../src/libraries/uploadImage.js"
 
 const handler = async (m, { conn, usedPrefix, command }) => {
-  const idioma = global.db.data.users[m.sender].language || global.defaultLenguaje
+  const idioma = global.db.data.users[m.sender]?.language || global.defaultLenguaje
   const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`))
   const tradutor = _translate.plugins.herramientas_hd
 
@@ -11,18 +11,28 @@ const handler = async (m, { conn, usedPrefix, command }) => {
     const q = m.quoted ? m.quoted : m
     const mime = (q.msg || q).mimetype || q.mediaType || ""
 
-    if (!mime) throw `${tradutor.texto1} ${usedPrefix + command}*`
-    if (!/image\/(jpe?g|png)/.test(mime)) throw `${tradutor.texto2[0]} (${mime}) ${tradutor.texto2[1]}`
+    // Validación de entrada
+    if (!mime) throw `*${tradutor.texto1} ${usedPrefix + command}*`
+    if (!/image\/(jpe?g|png)/.test(mime)) throw `*${tradutor.texto2[0]}* (${mime}) ${tradutor.texto2[1]}`
 
-    m.reply(tradutor.texto3)
+    // Notificar al usuario que el proceso inició
+    await m.reply(tradutor.texto3)
 
     const img = await q.download()
     const fileUrl = await uploadImage(img)
+    
+    // Ejecutar mejora de imagen
     const banner = await upscaleWithStellar(fileUrl)
 
-    await conn.sendMessage(m.chat, { image: banner }, { quoted: m })
+    // Enviar resultado
+    await conn.sendMessage(m.chat, { 
+        image: banner, 
+        caption: `✅ *Imagen mejorada con éxito*` 
+    }, { quoted: m })
+
   } catch (e) {
-    throw tradutor.texto4 + e
+    console.error(e) // Para que tú veas el error real en la consola
+    m.reply(`❌ ${tradutor.texto4}\n\n*Error:* ${e.message || e}`)
   }
 }
 
@@ -32,14 +42,17 @@ handler.command = ["remini", "hd", "enhance"]
 export default handler
 
 async function upscaleWithStellar(url) {
-  const endpoint = `https://api.stellarwa.xyz/tools/upscale?url=${url}&key=BrunoSobrino`
+  try {
+    const endpoint = `https://api.stellarwa.xyz/tools/upscale?url=${encodeURIComponent(url)}&key=BrunoSobrino`
+    
+    const { data } = await axios.get(endpoint, {
+      responseType: "arraybuffer",
+      timeout: 60000, // Espera hasta 60 segundos
+      headers: { 'Accept': 'image/*' }
+    })
 
-  const { data } = await axios.get(endpoint, {
-    responseType: "arraybuffer",
-    headers: {
-      accept: "image/*"
-    }
-  })
-
-  return Buffer.from(data)
+    return Buffer.from(data)
+  } catch (err) {
+    throw new Error("La API de mejora no respondió a tiempo o falló.")
+  }
 }
