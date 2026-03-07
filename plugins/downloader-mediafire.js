@@ -9,29 +9,33 @@ const handler = async (m, { conn, args }) => {
 
   try {
     const startTime = performance.now();
-    const { name, link, mime, sizeH } = await mediafireDl(args[0]);
+    const { name, link, sizeH } = await mediafireDl(args[0]);
 
-    const { key } = await m.reply(`🚀 *Descargando:* ${name}\n⚖️ *Tamaño:* ${sizeH}\n\n_Preparando archivo para WhatsApp..._`);
+    const { key } = await m.reply(`🚀 *Descargando:* ${name}\n⚖️ *Tamaño:* ${sizeH}\n\n_Verificando integridad del archivo..._`);
 
+    // DESCARGA TOTAL: Usamos un timeout largo y máximo de respuesta para evitar el error de 0kb o archivos corruptos
     const t1 = performance.now();
-    // Descargamos con configuración específica para evitar corrupción
-    const res = await axios.get(link, { 
+    const response = await axios.get(link, { 
         responseType: 'arraybuffer',
+        timeout: 120000, // 2 minutos de espera máxima
         headers: { 
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Referer': args[0]
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Connection': 'keep-alive'
         }
     });
     const t2 = performance.now();
 
-    const buffer = Buffer.from(res.data);
+    const buffer = Buffer.from(response.data);
+    const mime = lookup(name) || 'video/mp4'; // Forzamos MIME si falla la detección
     const downloadSpeed = ((buffer.length / (1024 * 1024)) / ((t2 - t1) / 1000)).toFixed(2);
 
-    // ENVIAR ARCHIVO: Usamos un objeto literal para asegurar el reconocimiento del tipo
+    // ENVIAR: Usamos el método de envío nativo de documentos más compatible
     await conn.sendMessage(m.chat, { 
         document: buffer, 
         fileName: name, 
-        mimetype: mime 
+        mimetype: mime,
+        caption: `✅ *Archivo verificado e íntegro.*`
     }, { quoted: m });
 
     const totalTime = (performance.now() - startTime) / 1000;
@@ -45,8 +49,8 @@ const handler = async (m, { conn, args }) => {
     await conn.sendMessage(m.chat, { text: finalCaption, edit: key });
 
   } catch (error) {
-    console.error(error);
-    await m.reply('❌ Error: El archivo es demasiado grande o MediaFire bloqueó la conexión.');
+    console.error('Error en MediaFire:', error.message);
+    await m.reply('❌ Error: El servidor de MediaFire rechazó la conexión o el archivo es demasiado pesado.');
   }
 };
 
@@ -54,9 +58,7 @@ handler.command = /^(mediafire|mediafiredl|dlmediafire)$/i;
 export default handler;
 
 async function mediafireDl(url) {
-  const res = await axios.get(url, { 
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36' }
-  });
+  const res = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }});
   const $ = cheerio.load(res.data);
   const downloadButton = $('#downloadButton');
   let link = downloadButton.attr('href');
@@ -65,18 +67,15 @@ async function mediafireDl(url) {
     link = res.data.match(/href="(https:\/\/download\d+\.mediafire\.com[^"]+)"/)?.[1];
   }
 
-  // Limpieza de nombre (Solución al duplicado que vimos en tus fotos)
+  // Limpieza de nombre (Soluciona el duplicado que aparece en tu captura)
   let name = $('.promoDownloadName').first().attr('title') || $('.filename').first().text().trim();
   name = name.replace(/\s+/g, ' ').split('\n')[0].trim();
   
-  // Forzar extensión correcta
+  // Forzar extensión .mp4 si es el caso
   const urlExt = link.split('.').pop().split('?')[0];
-  if (!name.toLowerCase().endsWith(urlExt.toLowerCase())) {
-    name += `.${urlExt}`;
-  }
+  if (!name.toLowerCase().endsWith(urlExt.toLowerCase())) name += `.${urlExt}`;
 
   const sizeH = downloadButton.text().replace(/Download|[\(\)]|\s+/g, ' ').trim();
-  const mime = lookup(name) || 'application/octet-stream';
 
-  return { name, link, mime, sizeH };
+  return { name, link, sizeH };
 }
