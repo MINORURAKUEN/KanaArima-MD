@@ -14,22 +14,22 @@ const handler = async (m, { conn, usedPrefix, command }) => {
     if (!mime) throw `*${tradutor.texto1} ${usedPrefix + command}*`
     if (!/image\/(jpe?g|png)/.test(mime)) throw `*${tradutor.texto2[0]}* (${mime}) ${tradutor.texto2[1]}`
 
-    await m.reply(tradutor.texto3) // "Procesando imagen..."
+    await m.reply(tradutor.texto3)
 
     const img = await q.download()
     const fileUrl = await uploadImage(img)
     
-    // Sistema de reintentos con APIs verificadas 2026
-    const banner = await forceUpscale(fileUrl)
+    // Función de rescate con nuevos servidores verificados
+    const banner = await upscaleFinalResort(fileUrl)
 
     await conn.sendMessage(m.chat, { 
         image: banner, 
-        caption: `✅ *HD FINALIZADO*` 
+        caption: `✅ *IMAGEN OPTIMIZADA*` 
     }, { quoted: m })
 
   } catch (e) {
-    console.error(e)
-    m.reply(`❌ *Error Crítico:* Los servidores de IA están en mantenimiento. Intenta usar otro comando como .remini2 o espera unos minutos.`)
+    console.error("Fallo total en HD:", e)
+    m.reply(`❌ *SISTEMA SATURADO*\n\nNingún servidor de IA respondió. Esto pasa cuando hay demasiados usuarios usando el comando a nivel mundial. Reintenta en 5 minutos.`)
   }
 }
 
@@ -38,31 +38,36 @@ handler.tags = ["ai", "tools"]
 handler.command = ["remini", "hd", "enhance"]
 export default handler
 
-async function forceUpscale(url) {
+async function upscaleFinalResort(url) {
   const encoded = encodeURIComponent(url)
   
-  // Lista actualizada de Endpoints que NO requieren Key privada actualmente
-  const endpoints = [
-    `https://api.shizuka.site/remini?url=${encoded}`,
-    `https://api.vreden.my.id/api/remini?url=${encoded}`,
-    `https://api.aguzfamilia.me/api/remini?url=${encoded}`
+  // Lista de APIs frescas (Marzo 2026)
+  const sources = [
+    `https://api.zyzen.me/api/remini?url=${encoded}`,
+    `https://api.diioffc.xyz/api/remini?url=${encoded}`,
+    `https://api.btch.bz/api/remini?url=${encoded}`
   ]
 
-  for (let api of endpoints) {
+  for (let api of sources) {
     try {
-      const { data, status } = await axios.get(api, {
+      const res = await axios.get(api, {
         responseType: "arraybuffer",
-        timeout: 30000,
-        headers: { 'User-Agent': 'Mozilla/5.0' }
+        timeout: 50000, // Damos más tiempo para procesar
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'image/*'
+        }
       })
-      
-      if (status === 200 && data.byteLength > 1000) {
-        return Buffer.from(data)
+
+      // Verificamos que no sea un buffer vacío o un error disfrazado
+      if (res.status === 200 && res.data.byteLength > 2000) {
+        return Buffer.from(res.data)
       }
     } catch (err) {
-      continue // Si una falla, salta a la siguiente sin avisar al usuario
+      console.log(`Fallo en: ${api.split('/')[2]}`)
+      continue 
     }
   }
 
-  throw new Error("Servidores saturados")
+  throw new Error("Servidores fuera de línea")
 }
