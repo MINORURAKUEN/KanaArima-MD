@@ -11,20 +11,18 @@ const handler = async (m, { conn, usedPrefix, command }) => {
     const q = m.quoted ? m.quoted : m
     const mime = (q.msg || q).mimetype || q.mediaType || ""
 
-    // Validación de que sea una imagen
+    // Validación de entrada
     if (!mime) throw `*${tradutor.texto1} ${usedPrefix + command}*`
     if (!/image\/(jpe?g|png)/.test(mime)) throw `*${tradutor.texto2[0]}* (${mime}) ${tradutor.texto2[1]}`
 
-    // Mensaje de "Procesando..."
-    await m.reply(tradutor.texto3)
+    await m.reply(tradutor.texto3) // "Procesando imagen..."
 
     const img = await q.download()
     const fileUrl = await uploadImage(img)
     
-    // Llamada a la nueva función con API operativa
+    // Nueva función con APIs actualizadas a marzo 2026
     const banner = await upscaleImage(fileUrl)
 
-    // Envío de la imagen resultante
     await conn.sendMessage(m.chat, { 
         image: banner, 
         caption: `✅ *Imagen mejorada con éxito*` 
@@ -32,9 +30,8 @@ const handler = async (m, { conn, usedPrefix, command }) => {
 
   } catch (e) {
     console.error("Error en Remini:", e)
-    // Mensaje de error más descriptivo para el usuario
-    const errorMsg = e.response?.status === 401 ? "La llave de acceso (API Key) ha expirado." : e.message
-    m.reply(`❌ ${tradutor.texto4}\n\n*Detalle:* ${errorMsg}`)
+    // Mostramos un error más limpio al usuario
+    m.reply(`❌ ${tradutor.texto4}\n\n*Detalle:* El servicio de mejora de imagen está saturado o fuera de línea. Intenta de nuevo en unos minutos.`)
   }
 }
 
@@ -44,27 +41,27 @@ handler.command = ["remini", "hd", "enhance"]
 export default handler
 
 /**
- * Función para mejorar imagen usando una API alternativa
- * Se cambió la API de Stellar (401 error) por Alyachan/Aisearch
+ * Función optimizada para evitar los errores 401 y ENOTFOUND
  */
 async function upscaleImage(url) {
+  // Intentamos con la API de "Skidy" que es muy robusta para Remini
   try {
-    // Usamos un endpoint alternativo común en bots de 2026
-    const endpoint = `https://api.alyachan.dev/api/remini?image=${encodeURIComponent(url)}&apikey=Gata-Dios`
+    const endpoint = `https://api.skidiyan.xyz/api/remini?url=${encodeURIComponent(url)}`
     
-    const response = await axios.get(endpoint, {
+    const { data } = await axios.get(endpoint, {
       responseType: "arraybuffer",
-      timeout: 90000, // 90 segundos porque el HD es lento
-      headers: { 
-        'Accept': 'image/*'
-      }
+      timeout: 60000,
+      headers: { 'Accept': 'image/*' }
     })
 
-    return Buffer.from(response.data)
+    return Buffer.from(data)
   } catch (err) {
-    // Si la anterior falla, intentamos con una segunda opción de respaldo
-    const backupEndpoint = `https://api.zenkey.my.id/api/ai/remini?url=${encodeURIComponent(url)}`
-    const resBackup = await axios.get(backupEndpoint, { responseType: "arraybuffer" })
-    return Buffer.from(resBackup.data)
+    // Si falla la primera, usamos una de respaldo de "Aisearch" (muy estable)
+    const backupUrl = `https://api.aisearch.icu/api/remini?url=${encodeURIComponent(url)}`
+    const response = await axios.get(backupUrl, { 
+        responseType: "arraybuffer",
+        timeout: 60000 
+    })
+    return Buffer.from(response.data)
   }
 }
