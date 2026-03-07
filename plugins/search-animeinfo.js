@@ -1,9 +1,8 @@
 import axios from 'axios';
-import * as cheerio from 'cheerio';
 import translate from '@vitalets/google-translate-api';
 import fs from 'fs';
 
-const handler = async (m, { conn, text, usedPrefix }) => {
+const handler = async (m, { conn, text, usedPrefix, command }) => {
   const datas = global;
   const idioma = datas.db.data.users[m.sender]?.language || global.defaultLenguaje;
   const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
@@ -12,48 +11,64 @@ const handler = async (m, { conn, text, usedPrefix }) => {
   if (!text) return m.reply(`*${tradutor.texto1}*`);
 
   try {
-    // Busqueda en MyAnimeList via Jikan API (La API oficial abierta de MAL)
-    const { data } = await axios.get(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(text)}&limit=1`);
-    
-    if (!data || !data.data || data.data.length === 0) throw tradutor.texto3;
+    const query = `
+    query ($search: String) {
+      Media (search: $search, type: ANIME) {
+        id
+        title { romaji english native }
+        studios(isMain: true) { nodes { name } }
+        seasonYear
+        episodes
+        genres
+        duration
+        format
+        season
+        status
+        description
+        coverImage { large }
+      }
+    }`;
 
-    const result = data.data[0];
+    const { data } = await axios.post('https://graphql.anilist.co', {
+      query,
+      variables: { search: text }
+    });
 
-    // Función segura para traducir
+    const result = data.data.Media;
+    if (!result) throw tradutor.texto3;
+
+    // Traducción de la sinopsis
+    const cleanDesc = result.description ? result.description.replace(/<br>|<i>|<\/i>|<b>|<\/b>/g, '') : 'No disponible';
     const safeTranslate = async (txt) => {
-      if (!txt) return 'No disponible';
       try {
         const res = await translate(txt, { to: 'es', autoCorrect: true });
         return res.text;
-      } catch {
-        return txt; 
-      }
+      } catch { return txt; }
     };
 
-    const background = await safeTranslate(result.background);
-    const synopsis = await safeTranslate(result.synopsis);
+    const sinopsisTranslate = await safeTranslate(cleanDesc);
+    
+    // Mapeo de datos para el diseño
+    const titulo = result.title.romaji || result.title.english;
+    const estudios = result.studios.nodes.map(s => s.name).join(', ') || 'N/A';
+    const generos = result.genres.join(', ') || 'N/A';
+    const estado = result.status === 'FINISHED' ? 'Finalizado' : result.status === 'RELEASING' ? 'En emisión' : result.status;
 
     const AnimeInfo = `
-*${tradutor.texto2[0]}* ${result.title || 'N/A'}
-*${tradutor.texto2[1]}* ${result.type || 'N/A'}
-*${tradutor.texto2[2]}* ${(result.status || 'N/A').toUpperCase().replace(/\_/g, ' ')}
-*${tradutor.texto2[3]}* ${result.episodes || 'En emision'}
-*${tradutor.texto2[4]}* ${result.duration || 'N/A'}
-*${tradutor.texto2[5]}* ${(result.source || 'N/A').toUpperCase()}
-*${tradutor.texto2[6]}* ${result.aired?.from ? result.aired.from.split('T')[0] : 'N/A'}
-*${tradutor.texto2[7]}* ${result.aired?.to ? result.aired.to.split('T')[0] : 'En curso'}
-*${tradutor.texto2[8]}* ${result.popularity || 'N/A'}
-*${tradutor.texto2[9]}* ${result.favorites || 'N/A'}
-*${tradutor.texto2[10]}* ${result.rating || 'N/A'}
-*${tradutor.texto2[11]}* ${result.rank || 'N/A'}
-*${tradutor.texto2[12]}* ${result.trailer?.url || 'No disponible'}
-*${tradutor.texto2[13]}* ${result.url || 'N/A'}
+㊙️ ❘ Título: ${titulo}
+🏦 ❘ Estudio/s: ${estudios}
+📆 ❘ Año: ${result.seasonYear || 'N/A'}
+🗂 ❘ Episodios: ${result.episodes || 'En emisión'}
+🎧 ❘ Audio: Japonés
+💬 ❘ Subtitulos: Español
+🏷 ❘ Género: ${generos}
+⏱ ❘ Duración: ${result.duration ? result.duration + ' min' : 'N/A'}
+💽 ❘ Formato: ${result.format || 'N/A'}
+🔅 ❘ Temporada: ${result.season || 'N/A'}
+⏳ ❘ Estado: ${estado}
+📜 ❘ Sinopsis: ${sinopsisTranslate}`;
 
-*${tradutor.texto2[14]}* ${background}
-
-*${tradutor.texto2[15]}* ${synopsis}`;
-
-    const image = result.images?.jpg?.large_image_url || result.images?.jpg?.image_url;
+    const image = result.coverImage.large;
 
     await conn.sendFile(m.chat, image, 'anime.jpg', AnimeInfo.trim(), m);
 
@@ -63,7 +78,7 @@ const handler = async (m, { conn, text, usedPrefix }) => {
   }
 };
 
-handler.help = ['animeinfo <nombre>'];
+handler.help = ['anime <nombre>'];
 handler.tags = ['buscadores'];
 handler.command = /^(anime|animeinfo)$/i;
 
