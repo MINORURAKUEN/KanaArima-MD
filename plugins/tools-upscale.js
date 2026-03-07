@@ -14,22 +14,22 @@ const handler = async (m, { conn, usedPrefix, command }) => {
     if (!mime) throw `*${tradutor.texto1} ${usedPrefix + command}*`
     if (!/image\/(jpe?g|png)/.test(mime)) throw `*${tradutor.texto2[0]}* (${mime}) ${tradutor.texto2[1]}`
 
-    await m.reply(tradutor.texto3)
+    await m.reply(tradutor.texto3) // "Procesando imagen..."
 
     const img = await q.download()
     const fileUrl = await uploadImage(img)
     
-    // Ejecutamos el sistema de múltiples intentos (Fallback)
-    const banner = await upscaleSmart(fileUrl)
+    // Sistema de reintentos con APIs verificadas 2026
+    const banner = await forceUpscale(fileUrl)
 
     await conn.sendMessage(m.chat, { 
         image: banner, 
-        caption: `✅ *Imagen mejorada con éxito*` 
+        caption: `✅ *HD FINALIZADO*` 
     }, { quoted: m })
 
   } catch (e) {
     console.error(e)
-    m.reply(`❌ *Todas las APIs de HD están caídas actualmente.*\n\nDetalle: ${e.message}`)
+    m.reply(`❌ *Error Crítico:* Los servidores de IA están en mantenimiento. Intenta usar otro comando como .remini2 o espera unos minutos.`)
   }
 }
 
@@ -38,36 +38,31 @@ handler.tags = ["ai", "tools"]
 handler.command = ["remini", "hd", "enhance"]
 export default handler
 
-/**
- * Sistema Inteligente de Reintentos
- * Prueba varias APIs hasta encontrar una activa
- */
-async function upscaleSmart(url) {
-  const encodedUrl = encodeURIComponent(url)
+async function forceUpscale(url) {
+  const encoded = encodeURIComponent(url)
   
-  // Lista de APIs disponibles en 2026 para Remini/HD
-  const apis = [
-    { name: 'Skidiyan', url: `https://api.skidiyan.xyz/api/remini?url=${encodedUrl}` },
-    { name: 'Aisearch', url: `https://api.aisearch.icu/api/remini?url=${encodedUrl}` },
-    { name: 'Dylux', url: `https://api.dhammasepun.my.id/api/remini?url=${encodedUrl}` },
-    { name: 'Loli', url: `https://api.lolihunter.my.id/api/upscale?url=${encodedUrl}` }
+  // Lista actualizada de Endpoints que NO requieren Key privada actualmente
+  const endpoints = [
+    `https://api.shizuka.site/remini?url=${encoded}`,
+    `https://api.vreden.my.id/api/remini?url=${encoded}`,
+    `https://api.aguzfamilia.me/api/remini?url=${encoded}`
   ]
 
-  for (const api of apis) {
+  for (let api of endpoints) {
     try {
-      console.log(`Intentando con API: ${api.name}`)
-      const res = await axios.get(api.url, {
+      const { data, status } = await axios.get(api, {
         responseType: "arraybuffer",
-        timeout: 45000, // 45 segundos por intento
-        headers: { 'Accept': 'image/*' }
+        timeout: 30000,
+        headers: { 'User-Agent': 'Mozilla/5.0' }
       })
       
-      if (res.data) return Buffer.from(res.data)
+      if (status === 200 && data.byteLength > 1000) {
+        return Buffer.from(data)
+      }
     } catch (err) {
-      console.log(`API ${api.name} falló, saltando a la siguiente...`)
-      continue // Si esta falla, el bucle sigue con la siguiente
+      continue // Si una falla, salta a la siguiente sin avisar al usuario
     }
   }
 
-  throw new Error("No se pudo conectar con ninguna API de inteligencia artificial.")
+  throw new Error("Servidores saturados")
 }
