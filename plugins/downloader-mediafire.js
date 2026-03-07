@@ -1,7 +1,7 @@
 import axios from 'axios';
 import cheerio from 'cheerio';
 import { lookup } from 'mime-types';
-import fs from 'fs'; // Añadido: Importación necesaria para leer el idioma
+import fs from 'fs';
 
 const handler = async (m, {conn, args, usedPrefix, command}) => {
   const datas = global;
@@ -12,16 +12,14 @@ const handler = async (m, {conn, args, usedPrefix, command}) => {
   if (!args[0]) throw `_*< DESCARGAS - MEDIAFIRE />*_\n\n*[ ℹ️ ] Ingrese un enlace de MediaFire.*`;
   
   try {
-    const startTime = Date.now(); // Inicio del cronómetro
+    const startTime = Date.now();
     const res = await mediafireDl(args[0]);
-    const {name, size, date, mime, link} = res;
+    const {name, size, mime, link} = res;
     
-    // Cálculo de velocidad simulada o tiempo de respuesta
-    const endTime = Date.now();
-    const speed = (endTime - startTime) / 1000; // Tiempo en segundos
+    const speed = (Date.now() - startTime) / 1000;
 
     const caption = `
-${tradutor.texto2[0]}
+< DESCARGAS - MEDIAFIRE />
 *ARCHIVO:* ${name}
 *TAMAÑO:* ${size}
 *TIPO:* ${mime}
@@ -29,13 +27,11 @@ ${tradutor.texto2[0]}
 *ESTADO:* Enviando archivo...`.trim();
 
     await m.reply(caption);
-
-    // Enviamos el archivo
     await conn.sendFile(m.chat, link, name, '', m, null, { mimetype: mime, asDocument: true });
 
   } catch (error) {
     console.error('Error en MediaFire:', error);
-    await m.reply('❌ Ocurrió un error al procesar el enlace. Inténtalo de nuevo.');
+    await m.reply('❌ No se pudo obtener el archivo. Verifica el enlace.');
   }
 };
 
@@ -44,9 +40,6 @@ export default handler;
 
 async function mediafireDl(url) {
   try {
-    if (!url.includes('www.mediafire.com')) throw new Error('URL inválida');
-    
-    // Configuración de Axios para obtener info del archivo
     const res = await axios.get(url, { 
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
     });
@@ -55,17 +48,22 @@ async function mediafireDl(url) {
     const downloadButton = $('#downloadButton');
     let link = downloadButton.attr('href');
 
-    // Lógica de extracción del enlace (Scraping profundo)
     if (!link || link.includes('javascript:void(0)')) {
-        const htmlContent = res.data;
-        const linkMatch = htmlContent.match(/href="(https:\/\/download\d+\.mediafire\.com[^"]+)"/);
+        const linkMatch = res.data.match(/href="(https:\/\/download\d+\.mediafire\.com[^"]+)"/);
         link = linkMatch ? linkMatch[1] : null;
     }
 
-    if (!link) throw new Error('No se encontró el botón de descarga.');
+    if (!link) throw new Error('Enlace no encontrado');
 
-    const name = $('.filename').text().trim() || 'archivo_desconocido';
-    const size = $('#downloadButton').text().replace('Download', '').trim();
+    // CORRECCIÓN AQUÍ: Selector más específico para evitar duplicados
+    let name = $('.promoDownloadName').first().text().trim() || 
+               $('.filename').first().text().trim() || 
+               'archivo';
+
+    // Eliminar saltos de línea y espacios dobles que ensucian el nombre
+    name = name.replace(/\n/g, '').replace(/\s+/g, ' ');
+
+    const size = downloadButton.text().replace('Download', '').replace(/[()]/g, '').trim() || 'Desconocido';
     const ext = name.split('.').pop()?.toLowerCase();
     const mime = lookup(ext) || 'application/octet-stream';
 
