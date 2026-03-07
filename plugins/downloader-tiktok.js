@@ -1,105 +1,104 @@
-import axios from 'axios';
-import cheerio from 'cheerio';
-import fetch from 'node-fetch';
-import fs from 'fs';
+import axios from 'axios'
+import cheerio from 'cheerio'
+import fs from 'fs'
 
-export default {
-  command: ['tiktok', 'tt', 'ttdl', 'tiktokdl'],
-  category: 'downloader',
-  run: async (client, m, { args, command, usedPrefix }) => {
-    // 1. Configuración de Idioma y Traducciones
-    const datas = global;
-    const idioma = datas.db?.data?.users[m.sender]?.language || global.defaultLenguaje || 'es';
-    let tradutor;
-    try {
-        const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
-        tradutor = _translate.plugins.descargas_tiktok;
-    } catch {
-        tradutor = { 
-          texto1: '✿ Ingresa un enlace de TikTok.', 
-          texto3: '📥 Procesando...', 
-          texto8: ['Usa', 'para audio'], 
-          texto9: '❌ Error al obtener el video.' 
-        };
+const handler = async (m, { conn, text, args, usedPrefix, command }) => {
+
+  const datas = global
+  const idioma = datas.db.data.users[m.sender]?.language || global.defaultLenguaje
+  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`))
+  const tradutor = _translate.plugins.descargas_tiktok
+
+  if (!text) throw `${tradutor.texto1} _${usedPrefix + command} https://vt.tiktok.com/ZSSm2fhLX/_`
+
+  if (!/tiktok\.com/.test(text)) 
+  throw `${tradutor.texto2} _${usedPrefix + command} https://vt.tiktok.com/ZSSm2fhLX/_`
+
+  try {
+
+    const links = await fetchDownloadLinks(text, 'tiktok')
+
+    if (!links) throw new Error('No se pudieron obtener enlaces')
+
+    const download = getDownloadLink('tiktok', links)
+
+    if (!download) throw new Error('No se pudo obtener enlace')
+
+    const cap = `${tradutor.texto8[0]} _${usedPrefix}tomp3_ ${tradutor.texto8[1]}`
+
+    await conn.sendMessage(m.chat, {
+      video: { url: download },
+      caption: cap
+    }, { quoted: m })
+
+  } catch (e) {
+
+    throw `${tradutor.texto9}`
+
+  }
+
+}
+
+handler.command = /^(tiktok|ttdl|tiktokdl|tiktoknowm|tt|ttnowm|tiktokaudio)$/i
+export default handler
+
+
+async function fetchDownloadLinks(text, platform) {
+
+  const { SITE_URL, form } = createApiRequest(text, platform)
+
+  const res = await axios.post(`${SITE_URL}api`, form.toString(), {
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'Origin': SITE_URL,
+      'Referer': SITE_URL,
+      'User-Agent': 'Mozilla/5.0',
+      'X-Requested-With': 'XMLHttpRequest'
     }
+  })
 
-    if (!args.length) return m.reply(tradutor.texto1);
+  const html = res?.data?.html
 
-    const urls = args.filter(arg => /(?:https:?\/{2})?(?:w{3}|vm|vt|t)?\.?tiktok.com\/([^\s&]+)/gi.test(arg));
-    
-    // Servidores de respaldo (Failover)
-    const backupServers = [
-      { name: 'Masha API', url: global.masha || 'https://api.masha.xyz' }, 
-      { name: 'Alya API', url: global.alya || 'https://api.alya.xyz' },
-      { name: 'Masachika API', url: global.masachika || 'https://api.masachika.xyz' }
-    ].sort(() => Math.random() - 0.5);
+  if (!html || res?.data?.status !== 'success') return null
 
-    // --- FUNCIÓN PARA DESCARGAR (Lógica combinada) ---
-    const downloadVideo = async (url) => {
-      // Intento 1: API Principal
-      try {
-        const res = await fetch(`${global.api?.url}/dl/tiktok?url=${url}&key=${global.api?.key}`);
-        const json = await res.json();
-        if (json.data) return json.data;
-      } catch {}
+  const $ = cheerio.load(html)
 
-      // Intento 2: Scraper Manual (Instatiktok)
-      try {
-        const manualLinks = await fetchManualLinks(url);
-        if (manualLinks) {
-          const dl = manualLinks.find(link => /hdplay/.test(link)) || manualLinks[0];
-          if (dl) return { dl, title: 'TikTok Video', backup: 'Web Scraper' };
-        }
-      } catch {}
+  const links = []
 
-      // Intento 3: Servidores de respaldo
-      for (let server of backupServers) {
-        try {
-          const res = await fetch(`${server.url}/Tiktok_videodl?url=${encodeURIComponent(url)}`);
-          if (!res.ok) continue;
-          const json = await res.json();
-          const videoUrl = json.video_url || json.result?.video || json.data?.url;
-          if (videoUrl) return { dl: videoUrl, title: 'TikTok Video', backup: server.name };
-        } catch {}
-      }
-      return null;
-    };
+  $('a.btn[href^="http"]').each((_, el) => {
+    const link = $(el).attr('href')
+    if (link && !links.includes(link)) links.push(link)
+  })
 
-    // --- LÓGICA PRINCIPAL ---
-    if (urls.length) {
-      await m.reply(tradutor.texto3);
-      
-      if (urls.length > 1) {
-        const medias = [];
-        for (const url of urls.slice(0, 10)) {
-          const data = await downloadVideo(url);
-          if (data) {
-            medias.push({ type: 'video', data: { url: data.dl || data.video_url }, caption: `✅ Enlace: ${url}` });
-          }
-        }
-        if (medias.length) return await client.sendAlbumMessage(m.chat, medias, { quoted: m });
-        else return m.reply(tradutor.texto9);
-      } else {
-        const data = await downloadVideo(urls[0]);
-        if (!data) return m.reply(tradutor.texto9);
+  return links
 
-        const caption = genCaption(data, tradutor, usedPrefix);
-        await client.sendMessage(m.chat, { video: { url: data.dl || data.video_url }, caption }, { quoted: m });
-      }
+}
 
-    } else {
-      // BÚSQUEDA POR TEXTO
-      const query = args.join(" ");
-      try {
-        await m.reply(tradutor.texto3);
-        const res = await fetch(`${global.api?.url}/search/tiktok?query=${encodeURIComponent(query)}&key=${global.api?.key}`);
-        const json = await res.json();
-        const results = json.data;
 
-        if (!results || results.length === 0) return m.reply(`❖ No se encontraron resultados.`);
-        const data = results[0];
-        const caption = genCaption(data, tradutor, usedPrefix);
-        await client.sendMessage(m.chat, { video: { url: data.dl }, caption }, { quoted: m });
+function createApiRequest(text, platform) {
+
+  const SITE_URL = 'https://instatiktok.com/'
+
+  const form = new URLSearchParams()
+
+  form.append('url', text)
+  form.append('platform', platform)
+  form.append('siteurl', SITE_URL)
+
+  return { SITE_URL, form }
+
+}
+
+
+function getDownloadLink(platform, links) {
+
+  if (platform === 'tiktok') {
+    return links.find(link => /hdplay/.test(link)) || links[0]
+  }
+
+  return null
+
+}        await client.sendMessage(m.chat, { video: { url: data.dl }, caption }, { quoted: m });
       } catch {
         m.reply(tradutor.texto9);
       }
