@@ -27,11 +27,13 @@ const handler = async (m, {conn, args, usedPrefix, command}) => {
 *ESTADO:* Enviando archivo...`.trim();
 
     await m.reply(caption);
+
+    // Forzamos el nombre del archivo en el envío para evitar el .bin
     await conn.sendFile(m.chat, link, name, '', m, null, { mimetype: mime, asDocument: true });
 
   } catch (error) {
     console.error('Error en MediaFire:', error);
-    await m.reply('❌ No se pudo obtener el archivo. Verifica el enlace.');
+    await m.reply('❌ No se pudo procesar el archivo.');
   }
 };
 
@@ -53,21 +55,24 @@ async function mediafireDl(url) {
         link = linkMatch ? linkMatch[1] : null;
     }
 
-    if (!link) throw new Error('Enlace no encontrado');
+    // 1. Extraer nombre base limpiando duplicados
+    let rawName = $('.promoDownloadName').first().attr('title') || 
+                  $('.filename').first().text().trim() || 
+                  'archivo_descargado';
 
-    // CORRECCIÓN AQUÍ: Selector más específico para evitar duplicados
-    let name = $('.promoDownloadName').first().text().trim() || 
-               $('.filename').first().text().trim() || 
-               'archivo';
+    // 2. Limpieza profunda del nombre (quitar repetidos y espacios extra)
+    let cleanName = rawName.replace(/\s+/g, ' ').split('\n')[0].trim();
 
-    // Eliminar saltos de línea y espacios dobles que ensucian el nombre
-    name = name.replace(/\n/g, '').replace(/\s+/g, ' ');
+    // 3. Asegurar extensión (MediaFire a veces la oculta en el texto del botón)
+    const urlExt = link.split('.').pop().split('?')[0];
+    if (!cleanName.includes('.') && urlExt) {
+        cleanName += `.${urlExt}`;
+    }
 
-    const size = downloadButton.text().replace('Download', '').replace(/[()]/g, '').trim() || 'Desconocido';
-    const ext = name.split('.').pop()?.toLowerCase();
-    const mime = lookup(ext) || 'application/octet-stream';
+    const size = downloadButton.text().replace(/Download|[\(\)]|\s+/g, ' ').trim() || 'Desconocido';
+    const mime = lookup(cleanName) || 'application/octet-stream';
 
-    return { name, size, mime, link };
+    return { name: cleanName, size, mime, link };
   } catch (error) {
     throw error;
   }
