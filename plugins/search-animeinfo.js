@@ -14,44 +14,51 @@ const handler = async (m, { conn, text, usedPrefix }) => {
 
   try {
     const anime = await client.searchAnime(text);
-    if (!anime || anime.data.length === 0) throw tradutor.texto3;
+    if (!anime || !anime.data || anime.data.length === 0) throw tradutor.texto3;
 
     const result = anime.data[0];
 
-    // Traducción de Sinopsis y Background (si existen)
-    const background = result.background ? (await translate(result.background, { to: 'es', autoCorrect: true })).text : 'N/A';
-    const synopsis = result.synopsis ? (await translate(result.synopsis, { to: 'es', autoCorrect: true })).text : 'N/A';
+    // Función para traducir sin que el comando muera si falla Google
+    const safeTranslate = async (txt) => {
+      if (!txt) return 'No disponible';
+      try {
+        const res = await translate(txt, { to: 'es', autoCorrect: true });
+        return res.text;
+      } catch {
+        return txt; // Retorna original si falla la traducción
+      }
+    };
 
-    // Limpieza de datos técnicos
-    const trailer = result.trailer?.url || 'No disponible';
-    const score = result.score || 'N/A';
+    const background = await safeTranslate(result.background);
+    const synopsis = await safeTranslate(result.synopsis);
 
     const AnimeInfo = `
-✨ *${tradutor.texto2[0]}* ${result.title}
-🎞️ *${tradutor.texto2[1]}* ${result.type}
-📊 *${tradutor.texto2[2]}* ${result.status.toUpperCase().replace(/\_/g, ' ')}
-🔢 *${tradutor.texto2[3]}* ${result.episodes || 'En emisión'}
-⏱️ *${tradutor.texto2[4]}* ${result.duration}
-🌍 *${tradutor.texto2[5]}* ${result.source.toUpperCase()}
-📅 *${tradutor.texto2[6]}* ${result.aired.from.split('T')[0]}
-📅 *${tradutor.texto2[7]}* ${result.aired.to ? result.aired.to.split('T')[0] : 'Actualidad'}
-🔥 *${tradutor.texto2[8]}* ${result.popularity}
-⭐ *${tradutor.texto2[9]}* ${result.favorites}
-🔞 *${tradutor.texto2[10]}* ${result.rating}
-🏆 *${tradutor.texto2[11]}* ${result.rank}
-🎥 *${tradutor.texto2[12]}* ${trailer}
-🌐 *${tradutor.texto2[13]}* ${result.url}
+*${tradutor.texto2[0]}* ${result.title || 'N/A'}
+*${tradutor.texto2[1]}* ${result.type || 'N/A'}
+*${tradutor.texto2[2]}* ${(result.status || 'N/A').toUpperCase().replace(/\_/g, ' ')}
+*${tradutor.texto2[3]}* ${result.episodes || 'En emision'}
+*${tradutor.texto2[4]}* ${result.duration || 'N/A'}
+*${tradutor.texto2[5]}* ${(result.source || 'N/A').toUpperCase()}
+*${tradutor.texto2[6]}* ${result.aired?.from ? result.aired.from.split('T')[0] : 'N/A'}
+*${tradutor.texto2[7]}* ${result.aired?.to ? result.aired.to.split('T')[0] : 'En curso'}
+*${tradutor.texto2[8]}* ${result.popularity || 'N/A'}
+*${tradutor.texto2[9]}* ${result.favorites || 'N/A'}
+*${tradutor.texto2[10]}* ${result.rating || 'N/A'}
+*${tradutor.texto2[11]}* ${result.rank || 'N/A'}
+*${tradutor.texto2[12]}* ${result.trailer?.url || 'No disponible'}
+*${tradutor.texto2[13]}* ${result.url || 'N/A'}
 
-📖 *${tradutor.texto2[14]}* ${background}
+*${tradutor.texto2[14]}* ${background}
 
-📝 *${tradutor.texto2[15]}* ${synopsis}`;
+*${tradutor.texto2[15]}* ${synopsis}`;
 
-    // Enviamos la imagen con la información formateada
-    await conn.sendFile(m.chat, result.images.jpg.large_image_url || result.images.jpg.image_url, 'anime.jpg', AnimeInfo.trim(), m);
+    const image = result.images?.jpg?.large_image_url || result.images?.jpg?.image_url;
+
+    await conn.sendFile(m.chat, image, 'anime.jpg', AnimeInfo.trim(), m);
 
   } catch (e) {
     console.error(e);
-    throw `*${tradutor.texto3}*`;
+    m.reply(`*${tradutor.texto3}*`);
   }
 };
 
