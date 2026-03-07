@@ -28,7 +28,7 @@ global.prems = [];
 global.BASE_API_DELIRIUS = "https://delirius-apiofc.vercel.app";
 
 global.packname = 'Sticker';
-global.author = 'Kana';
+global.author = ' ᭄🅜֟፝ıηͨσ‍ͥяͩυ🧸⃝꙰ཻུ⸙͎';
 global.wm = 'Kana Arima - Bot';
 global.titulowm = 'Kana Bot';
 global.titulowm2 = `Kana arima`
