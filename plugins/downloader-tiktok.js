@@ -98,36 +98,4 @@ function getDownloadLink(platform, links) {
 
   return null
 
-}        await client.sendMessage(m.chat, { video: { url: data.dl }, caption }, { quoted: m });
-      } catch {
-        m.reply(tradutor.texto9);
-      }
-    }
-  },
-};
-
-// Auxiliar: Scraper Manual
-async function fetchManualLinks(url) {
-    const SITE_URL = 'https://instatiktok.com/';
-    const form = new URLSearchParams({ url, platform: 'tiktok', siteurl: SITE_URL });
-    const res = await axios.post(`${SITE_URL}api`, form.toString(), {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'User-Agent': 'Mozilla/5.0' }
-    });
-    const html = res?.data?.html;
-    if (!html) return null;
-    const $ = cheerio.load(html);
-    const links = [];
-    $('a.btn[href^="http"]').each((_, el) => { links.push($(el).attr('href')); });
-    return links.length ? links : null;
-}
-
-// Generador de Caption
-function genCaption(data, tradutor, usedPrefix) {
-  const { title = 'TikTok Video', author = {}, stats = {}, music = {}, backup } = data;
-  return `ㅤ۟∩　ׅ　★ ໌　ׅ　🅣𝗂𝗄𝖳𝗈𝗄 🅓ownload\n\n` +
-         `𖣣ֶㅤ֯⌗ ✿ *Título:* ${title}\n` +
-         `𖣣ֶㅤ֯⌗ ★ *Autor:* ${author.nickname || 'User'}\n` +
-         `𖣣ֶㅤ֯⌗ ♡ *Likes:* ${(stats.likes || 0).toLocaleString()}\n` +
-         `${backup ? `𖣣ֶㅤ֯⌗ ⚙️ *Source:* ${backup}` : ''}\n\n` +
-         `_${tradutor.texto8[0]} *${usedPrefix}tomp3* ${tradutor.texto8[1]}_`;
 }
