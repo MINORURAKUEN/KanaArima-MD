@@ -11,28 +11,30 @@ const handler = async (m, { conn, usedPrefix, command }) => {
     const q = m.quoted ? m.quoted : m
     const mime = (q.msg || q).mimetype || q.mediaType || ""
 
-    // Validación de entrada
+    // Validación de que sea una imagen
     if (!mime) throw `*${tradutor.texto1} ${usedPrefix + command}*`
     if (!/image\/(jpe?g|png)/.test(mime)) throw `*${tradutor.texto2[0]}* (${mime}) ${tradutor.texto2[1]}`
 
-    // Notificar al usuario que el proceso inició
+    // Mensaje de "Procesando..."
     await m.reply(tradutor.texto3)
 
     const img = await q.download()
     const fileUrl = await uploadImage(img)
     
-    // Ejecutar mejora de imagen
-    const banner = await upscaleWithStellar(fileUrl)
+    // Llamada a la nueva función con API operativa
+    const banner = await upscaleImage(fileUrl)
 
-    // Enviar resultado
+    // Envío de la imagen resultante
     await conn.sendMessage(m.chat, { 
         image: banner, 
         caption: `✅ *Imagen mejorada con éxito*` 
     }, { quoted: m })
 
   } catch (e) {
-    console.error(e) // Para que tú veas el error real en la consola
-    m.reply(`❌ ${tradutor.texto4}\n\n*Error:* ${e.message || e}`)
+    console.error("Error en Remini:", e)
+    // Mensaje de error más descriptivo para el usuario
+    const errorMsg = e.response?.status === 401 ? "La llave de acceso (API Key) ha expirado." : e.message
+    m.reply(`❌ ${tradutor.texto4}\n\n*Detalle:* ${errorMsg}`)
   }
 }
 
@@ -41,18 +43,28 @@ handler.tags = ["ai", "tools"]
 handler.command = ["remini", "hd", "enhance"]
 export default handler
 
-async function upscaleWithStellar(url) {
+/**
+ * Función para mejorar imagen usando una API alternativa
+ * Se cambió la API de Stellar (401 error) por Alyachan/Aisearch
+ */
+async function upscaleImage(url) {
   try {
-    const endpoint = `https://api.stellarwa.xyz/tools/upscale?url=${encodeURIComponent(url)}&key=BrunoSobrino`
+    // Usamos un endpoint alternativo común en bots de 2026
+    const endpoint = `https://api.alyachan.dev/api/remini?image=${encodeURIComponent(url)}&apikey=Gata-Dios`
     
-    const { data } = await axios.get(endpoint, {
+    const response = await axios.get(endpoint, {
       responseType: "arraybuffer",
-      timeout: 60000, // Espera hasta 60 segundos
-      headers: { 'Accept': 'image/*' }
+      timeout: 90000, // 90 segundos porque el HD es lento
+      headers: { 
+        'Accept': 'image/*'
+      }
     })
 
-    return Buffer.from(data)
+    return Buffer.from(response.data)
   } catch (err) {
-    throw new Error("La API de mejora no respondió a tiempo o falló.")
+    // Si la anterior falla, intentamos con una segunda opción de respaldo
+    const backupEndpoint = `https://api.zenkey.my.id/api/ai/remini?url=${encodeURIComponent(url)}`
+    const resBackup = await axios.get(backupEndpoint, { responseType: "arraybuffer" })
+    return Buffer.from(resBackup.data)
   }
 }
