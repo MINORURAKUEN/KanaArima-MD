@@ -1,8 +1,7 @@
+import axios from 'axios';
+import * as cheerio from 'cheerio';
 import translate from '@vitalets/google-translate-api';
-import { Anime } from '@shineiichijo/marika';
 import fs from 'fs';
-
-const client = new Anime();
 
 const handler = async (m, { conn, text, usedPrefix }) => {
   const datas = global;
@@ -13,19 +12,21 @@ const handler = async (m, { conn, text, usedPrefix }) => {
   if (!text) return m.reply(`*${tradutor.texto1}*`);
 
   try {
-    const anime = await client.searchAnime(text);
-    if (!anime || !anime.data || anime.data.length === 0) throw tradutor.texto3;
+    // Busqueda en MyAnimeList via Jikan API (La API oficial abierta de MAL)
+    const { data } = await axios.get(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(text)}&limit=1`);
+    
+    if (!data || !data.data || data.data.length === 0) throw tradutor.texto3;
 
-    const result = anime.data[0];
+    const result = data.data[0];
 
-    // Función para traducir sin que el comando muera si falla Google
+    // Función segura para traducir
     const safeTranslate = async (txt) => {
       if (!txt) return 'No disponible';
       try {
         const res = await translate(txt, { to: 'es', autoCorrect: true });
         return res.text;
       } catch {
-        return txt; // Retorna original si falla la traducción
+        return txt; 
       }
     };
 
