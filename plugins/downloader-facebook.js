@@ -3,8 +3,8 @@ import fetch from 'node-fetch'
 let handler = async (m, { args, command, conn }) => {
   if (!args[0]) throw `*⚠️ Uso correcto: .${command} <enlace de Facebook>*`
 
-  // Reacción de "Buscando/Analizando"
-  await m.react('🔍')
+  // Reacción de "Buscando": Usando sintaxis compatible
+  await conn.sendMessage(m.chat, { react: { text: '🔍', key: m.key } })
 
   try {
     const data = await getFacebookData(args[0])
@@ -26,19 +26,21 @@ let handler = async (m, { args, command, conn }) => {
 
     collector.on('collect', async (msg) => {
       const sel = parseInt(msg.text) - 1
-      if (!options[sel]) return m.react('❌')
+      if (!options[sel]) {
+        return conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
+      }
 
       const { url, type } = options[sel]
 
-      // Reacción de "Descargando" (1%)
-      await m.react('⏳')
+      // Reacción de "Descargando"
+      await conn.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
 
       try {
         const res = await fetch(url)
         const buffer = await res.buffer()
 
-        // Reacción de "Subiendo" (99%)
-        await m.react('📤')
+        // Reacción de "Subiendo"
+        await conn.sendMessage(m.chat, { react: { text: '📤', key: m.key } })
 
         if (type === 'video') {
           await conn.sendFile(m.chat, buffer, 'fb.mp4', `✅ *Video descargado*`, m)
@@ -46,16 +48,16 @@ let handler = async (m, { args, command, conn }) => {
           await conn.sendMessage(m.chat, { audio: buffer, mimetype: 'audio/mp4' }, { quoted: m })
         }
 
-        // Reacción final de éxito
-        await m.react('✅')
+        // Reacción de éxito
+        await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
       } catch (err) {
-        await m.react('❌')
-        m.reply('Error al descargar el archivo.')
+        await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
+        m.reply('Error al procesar el archivo.')
       }
     })
 
   } catch (e) {
-    await m.react('❌')
+    await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
     m.reply(`❌ *Error:* ${e.message || e}`)
   }
 }
@@ -81,5 +83,5 @@ async function getFacebookData(link) {
   return null
 }
 
-handler.command = ['fb', 'facebook']
+handler.command = ['fb', 'facebook', 'fbdl']
 export default handler
