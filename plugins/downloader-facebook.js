@@ -1,80 +1,96 @@
-Import fetch from 'node-fetch'
+import fetch from 'node-fetch'
 
-let handler = async (m, { args, command, conn, text }) => {
-  if (!args[0]) throw `*⚠️ Uso correcto: .${command} <enlace de Facebook>*`
+let handler = async (m, { args, command, conn }) => {
+  if (!args[0]) throw `*⚠️ Uso correcto: .${command} <enlace de FB, IG o TikTok>*`
 
-  // Si el usuario solo envió el link, buscamos las opciones
-  if (!text.includes('|')) {
-    await m.reply('*[🔍] Buscando calidades disponibles...*')
-    
-    try {
-      const data = await getFacebookData(args[0])
-      if (!data) throw 'No se encontraron formatos disponibles.'
+  await m.reply('*[⏳] Analizando enlace y procesando descarga...*')
 
-      let menu = `✅ *Video Encontrado*\n\n`
-      menu += `Selecciona una opción respondiendo a este mensaje con el número:\n\n`
-      
-      // Mapeamos las opciones disponibles (HD, SD, Audio)
-      const options = []
-      if (data.hd) options.push({ type: 'video', quality: '720p/1080p (HD)', url: data.hd })
-      if (data.sd) options.push({ type: 'video', quality: '360p (SD)', url: data.sd })
-      if (data.audio) options.push({ type: 'audio', quality: 'Solo Audio (MP3)', url: data.audio })
+  try {
+    const link = args[0]
+    let videoUrl = null
+    let type = ""
 
-      options.forEach((opt, index) => {
-        menu += `${index + 1}. 📥 *${opt.quality}*\n`
-      })
-
-      // Guardamos temporalmente las URLs en la sesión del bot para usarlas al responder
-      conn.fb_download = conn.fb_download || {}
-      conn.fb_download[m.sender] = { link: args[0], options }
-
-      return m.reply(menu)
-      
-    } catch (e) {
-      return m.reply(`❌ *Error:* ${e.message || e}`)
+    // Identificación del tipo de enlace
+    if (link.includes('facebook.com') || link.includes('fb.watch')) {
+      videoUrl = await getFacebookVideo(link)
+      type = "Facebook"
+    } else if (link.includes('instagram.com')) {
+      videoUrl = await getInstagramVideo(link)
+      type = "Instagram"
+    } else if (link.includes('tiktok.com')) {
+      videoUrl = await getTikTokVideo(link)
+      type = "TikTok"
+    } else {
+      throw '*[ ❌ ] El enlace no es compatible. Soporta: FB, IG y TikTok.*'
     }
+
+    if (!videoUrl) throw `*[ ❌ ] No se pudo obtener el video de ${type}. Intenta con otro enlace.*`
+
+    await conn.sendFile(m.chat, videoUrl, 'video.mp4', `✅ *Video de ${type} descargado con éxito*`, m)
+
+  } catch (e) {
+    console.error(e)
+    m.reply(`❌ *Error:* ${e.message || e}`)
   }
 }
 
-// Lógica para detectar la respuesta del usuario (esto iría en un 'before' o manejado por el index)
-handler.before = async (m, { conn }) => {
-  if (!m.quoted || !m.text || !conn.fb_download || !conn.fb_download[m.sender]) return
-  
-  const choices = conn.fb_download[m.sender].options
-  const choice = parseInt(m.text) - 1
+/** * LÓGICA DE EXTRACCIÓN (APIs DE RESPALDO)
+ */
 
-  if (choices[choice]) {
-    const selected = choices[choice]
-    await m.reply(`*[⏳] Descargando ${selected.quality}...*`)
-    
-    if (selected.type === 'video') {
-      await conn.sendFile(m.chat, selected.url, 'fb.mp4', `✅ *Calidad: ${selected.quality}*`, m)
-    } else {
-      await conn.sendMessage(m.chat, { audio: { url: selected.url }, mimetype: 'audio/mp4' }, { quoted: m })
-    }
-    
-    delete conn.fb_download[m.sender] // Limpiar memoria
-  }
+async function getFacebookVideo(link) {
+  const encoded = encodeURIComponent(link)
+  const apis = [
+    `https://eliasar-yt-api.vercel.app/api/facebookdl?link=${encoded}`,
+    `https://api.botcahx.eu.org/api/dowloader/fbdown?url=${encoded}&apikey=BrunoSobrino`,
+    `https://api.vreden.my.id/api/facebook?url=${encoded}`
+  ]
+  return await tryApis(apis)
+}
+
+async function getInstagramVideo(link) {
+  const encoded = encodeURIComponent(link)
+  const apis = [
+    `https://api.botcahx.eu.org/api/dowloader/igdl?url=${encoded}&apikey=BrunoSobrino`,
+    `https://api.vreden.my.id/api/instagram?url=${encoded}`
+  ]
+  return await tryApis(apis)
+}
+
+async function getTikTokVideo(link) {
+  const encoded = encodeURIComponent(link)
+  const apis = [
+    `https://api.botcahx.eu.org/api/dowloader/tiktok?url=${encoded}&apikey=BrunoSobrino`,
+    `https://api.vreden.my.id/api/tiktok?url=${encoded}`
+  ]
+  return await tryApis(apis)
 }
 
 /**
- * Función que obtiene el objeto con todas las calidades
+ * Función genérica para probar múltiples APIs
  */
-async function getFacebookData(link) {
-  const encoded = encodeURIComponent(link)
-  // Usaremos una API que devuelva un objeto estructurado
-  const res = await fetch(`https://api.vreden.my.id/api/facebook?url=${encoded}`)
-  const json = await res.json()
+async function tryApis(apis) {
+  for (const url of apis) {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) continue
+      const json = await res.json()
+      
+      let result = null
+      // Adaptador universal de respuestas comunes
+      if (json.status && json.data) {
+          result = Array.isArray(json.data) ? json.data[0].url : (json.data.url || json.data.video)
+      } else if (json.result) {
+          result = json.result.video || json.result.url || (Array.isArray(json.result) ? json.result[0].url : null)
+      }
 
-  if (!json.status) return null
-
-  // Retornamos un objeto estandarizado
-  return {
-    hd: json.result.hd || null,
-    sd: json.result.sd || json.result.video || null,
-    audio: json.result.audio || null
+      if (result && result.startsWith('http')) return result
+    } catch { continue }
   }
+  return null
 }
 
-handler.command = ['fb', 'facebook', 'fbdl']
+handler.help = ['fb', 'ig', 'tk'].map(v => v + ' <enlace>')
+handler.tags = ['downloader']
+handler.command = ['fb', 'facebook', 'instagram', 'ig', 'igdl', 'tk', 'tiktok', 'tt']
+
 export default handler
