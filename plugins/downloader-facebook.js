@@ -1,95 +1,54 @@
 import fetch from 'node-fetch'
 
-let handler = async (m, { args, command, conn, text }) => {
-  // Inicializar el almacenamiento de sesiones si no existe
-  conn.fb_download = conn.fb_download || {}
-
+let handler = async (m, { args, command, conn }) => {
   if (!args[0]) throw `*⚠️ Uso correcto: .${command} <enlace de Facebook>*`
 
-  await m.reply('*[🔍] Analizando enlace y buscando calidades...*')
-  
   try {
-    const data = await getFacebookData(args[0])
-    if (!data || (!data.hd && !data.sd)) throw 'No se encontraron formatos de video disponibles.'
+    const videoUrl = await getFacebookVideo(args[0])
 
-    // Construir lista de opciones dinámicas
-    let options = []
-    if (data.hd) options.push({ type: 'video', quality: 'HD (Alta Definición)', url: data.hd })
-    if (data.sd) options.push({ type: 'video', quality: 'SD (Calidad Estándar)', url: data.sd })
-    if (data.audio) options.push({ type: 'audio', quality: 'Audio MP3', url: data.audio })
+    if (!videoUrl) throw '*[ ❌ ] No se pudo obtener el video. El enlace es inválido o el video es privado.*'
 
-    let menu = `✅ *Video Detectado*\n\n`
-    menu += `Responde a este mensaje con el *número* de la opción que deseas descargar:\n\n`
-    
-    options.forEach((opt, index) => {
-      menu += `*${index + 1}.* 📥 ${opt.quality}\n`
-    })
+    await conn.sendFile(m.chat, videoUrl, 'facebook.mp4', '✅ *Aquí tienes tu video*', m)
 
-    menu += `\n_ID de sesión: ${m.sender.split('@')[0]}_`
-
-    // Guardamos la sesión vinculada al ID del mensaje enviado
-    const { key } = await conn.reply(m.chat, menu, m)
-    conn.fb_download[m.sender] = { 
-        options, 
-        selecting: true, 
-        lastMsg: key.id 
-    }
-    
   } catch (e) {
     console.error(e)
-    return m.reply(`❌ *Error:* No se pudo procesar el video. Intenta con otro enlace.`)
+    m.reply(`❌ *Error:* ${e.message || e}`)
   }
 }
 
-// Lógica para capturar la respuesta del usuario
-handler.before = async (m, { conn }) => {
-  // Validar que sea una respuesta a un mensaje previo del bot y que haya una sesión activa
-  if (!m.quoted || !m.text || !conn.fb_download || !conn.fb_download[m.sender]) return
-  if (!conn.fb_download[m.sender].selecting) return
+async function getFacebookVideo(link) {
+  const encoded = encodeURIComponent(link)
+  
+  const apis = [
+    `https://eliasar-yt-api.vercel.app/api/facebookdl?link=${encoded}`,
+    `https://api.botcahx.eu.org/api/dowloader/fbdown?url=${encoded}&apikey=BrunoSobrino`,
+    `https://api.vreden.my.id/api/facebook?url=${encoded}`
+  ]
 
-  const session = conn.fb_download[m.sender]
-  const choice = parseInt(m.text.trim()) - 1
-
-  if (!isNaN(choice) && session.options[choice]) {
-    const selected = session.options[choice]
-    
-    await conn.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
-    await m.reply(`*🚀 Iniciando descarga de ${selected.quality}...*`)
-    
+  for (const url of apis) {
     try {
-      if (selected.type === 'video') {
-        await conn.sendFile(m.chat, selected.url, 'fb_video.mp4', `✅ *Aquí tienes tu video en ${selected.quality}*`, m)
-      } else {
-        await conn.sendMessage(m.chat, { 
-            audio: { url: selected.url }, 
-            mimetype: 'audio/mpeg',
-            fileName: 'fb_audio.mp3' 
-        }, { quoted: m })
-      }
+      const res = await fetch(url)
+      if (!res.ok) continue
+
+      const json = await res.json()
       
-      // Limpiar la sesión tras el éxito
-      delete conn.fb_download[m.sender]
+      let result = null
+      if (json.status && json.data && json.data.length > 0) {
+        result = json.data[0].url 
+      } else if (json.result) {
+        result = json.result.url || json.result.video || (Array.isArray(json.result) ? json.result[0].url : null)
+      }
+
+      if (result && result.startsWith('http')) return result
     } catch (err) {
-      await m.reply('❌ Error al enviar el archivo. El enlace podría haber expirado.')
+      continue 
     }
   }
+  return null
 }
 
-async function getFacebookData(link) {
-  try {
-    const res = await fetch(`https://api.vreden.my.id/api/facebook?url=${encodeURIComponent(link)}`)
-    const json = await res.json()
-    if (!json.status) return null
-    
-    return {
-      hd: json.result.hd || null,
-      sd: json.result.sd || json.result.video || null,
-      audio: json.result.audio || null
-    }
-  } catch {
-    return null
-  }
-}
+handler.help = ['facebook', 'fb'].map(v => v + ' <enlace>')
+handler.tags = ['downloader']
+handler.command = ['fb', 'facebook', 'fbdl']
 
-handler.command = /^(fb|facebook|fbdl)$/i
 export default handler
