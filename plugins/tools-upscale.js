@@ -11,17 +11,16 @@ const handler = async (m, { conn, usedPrefix, command }) => {
     const q = m.quoted ? m.quoted : m
     const mime = (q.msg || q).mimetype || q.mediaType || ""
 
-    // Validación de entrada
     if (!mime) throw `*${tradutor.texto1} ${usedPrefix + command}*`
     if (!/image\/(jpe?g|png)/.test(mime)) throw `*${tradutor.texto2[0]}* (${mime}) ${tradutor.texto2[1]}`
 
-    await m.reply(tradutor.texto3) // "Procesando imagen..."
+    await m.reply(tradutor.texto3)
 
     const img = await q.download()
     const fileUrl = await uploadImage(img)
     
-    // Nueva función con APIs actualizadas a marzo 2026
-    const banner = await upscaleImage(fileUrl)
+    // Ejecutamos el sistema de múltiples intentos (Fallback)
+    const banner = await upscaleSmart(fileUrl)
 
     await conn.sendMessage(m.chat, { 
         image: banner, 
@@ -29,9 +28,8 @@ const handler = async (m, { conn, usedPrefix, command }) => {
     }, { quoted: m })
 
   } catch (e) {
-    console.error("Error en Remini:", e)
-    // Mostramos un error más limpio al usuario
-    m.reply(`❌ ${tradutor.texto4}\n\n*Detalle:* El servicio de mejora de imagen está saturado o fuera de línea. Intenta de nuevo en unos minutos.`)
+    console.error(e)
+    m.reply(`❌ *Todas las APIs de HD están caídas actualmente.*\n\nDetalle: ${e.message}`)
   }
 }
 
@@ -41,27 +39,35 @@ handler.command = ["remini", "hd", "enhance"]
 export default handler
 
 /**
- * Función optimizada para evitar los errores 401 y ENOTFOUND
+ * Sistema Inteligente de Reintentos
+ * Prueba varias APIs hasta encontrar una activa
  */
-async function upscaleImage(url) {
-  // Intentamos con la API de "Skidy" que es muy robusta para Remini
-  try {
-    const endpoint = `https://api.skidiyan.xyz/api/remini?url=${encodeURIComponent(url)}`
-    
-    const { data } = await axios.get(endpoint, {
-      responseType: "arraybuffer",
-      timeout: 60000,
-      headers: { 'Accept': 'image/*' }
-    })
+async function upscaleSmart(url) {
+  const encodedUrl = encodeURIComponent(url)
+  
+  // Lista de APIs disponibles en 2026 para Remini/HD
+  const apis = [
+    { name: 'Skidiyan', url: `https://api.skidiyan.xyz/api/remini?url=${encodedUrl}` },
+    { name: 'Aisearch', url: `https://api.aisearch.icu/api/remini?url=${encodedUrl}` },
+    { name: 'Dylux', url: `https://api.dhammasepun.my.id/api/remini?url=${encodedUrl}` },
+    { name: 'Loli', url: `https://api.lolihunter.my.id/api/upscale?url=${encodedUrl}` }
+  ]
 
-    return Buffer.from(data)
-  } catch (err) {
-    // Si falla la primera, usamos una de respaldo de "Aisearch" (muy estable)
-    const backupUrl = `https://api.aisearch.icu/api/remini?url=${encodeURIComponent(url)}`
-    const response = await axios.get(backupUrl, { 
+  for (const api of apis) {
+    try {
+      console.log(`Intentando con API: ${api.name}`)
+      const res = await axios.get(api.url, {
         responseType: "arraybuffer",
-        timeout: 60000 
-    })
-    return Buffer.from(response.data)
+        timeout: 45000, // 45 segundos por intento
+        headers: { 'Accept': 'image/*' }
+      })
+      
+      if (res.data) return Buffer.from(res.data)
+    } catch (err) {
+      console.log(`API ${api.name} falló, saltando a la siguiente...`)
+      continue // Si esta falla, el bucle sigue con la siguiente
+    }
   }
+
+  throw new Error("No se pudo conectar con ninguna API de inteligencia artificial.")
 }
