@@ -1,65 +1,91 @@
-import fs from 'fs'
-import fetch from 'node-fetch'
+import axios from 'axios';
+import cheerio from 'cheerio';
+import fs from 'fs'; // Importación faltante corregida
+import { generateWAMessageFromContent } from "baileys";
 
 const handler = async (m, { conn, text, args, usedPrefix, command }) => {
+    const datas = global;
+    const idioma = datas.db.data.users[m.sender]?.language || global.defaultLenguaje || 'es';
+    
+    // Manejo seguro de lectura de archivos de idioma
+    let tradutor;
+    try {
+        const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
+        tradutor = _translate.plugins.descargas_tiktok;
+    } catch {
+        tradutor = { texto1: 'Ingrese un enlace de TikTok.', texto2: 'Enlace no válido.', texto3: 'Descargando...', texto8: ['Usa', 'para audio'], texto9: 'Error al descargar.' };
+    }
 
-const datas = global
-const idioma = datas.db.data.users[m.sender]?.language || global.defaultLenguaje
-const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`))
-const tradutor = _translate.plugins.descargas_tiktok
+    if (!text) throw `${tradutor.texto1} \n*${usedPrefix + command}* https://vt.tiktok.com/ZSSm2fhLX/`;
+    if (!/(?:https:?\/2)?(?:w{3}|vm|vt|t)?\.?tiktok\.com\/([^\s&]+)/gi.test(text)) throw tradutor.texto2;
 
-if (!text) throw `${tradutor.texto1} _${usedPrefix + command} https://tiktok.com/_`
+    await conn.sendMessage(m.chat, { react: { text: '⏳', key: m.key } }); // Reacción de espera
+    const isAudio = command.toLowerCase().includes('audio');
 
-if (!/tiktok\.com/.test(text))
-throw `${tradutor.texto2} _${usedPrefix + command} https://tiktok.com/_`
+    try {
+        const links = await fetchDownloadLinks(args[0]);
+        if (!links || links.length === 0) throw new Error();
 
-try {
+        const download = getDownloadLink(links);
+        
+        if (isAudio) {
+            // Lógica específica para Audio
+            await conn.sendMessage(m.chat, { 
+                audio: { url: download }, 
+                mimetype: 'audio/mp4', 
+                ptt: false 
+            }, { quoted: m });
+        } else {
+            // Lógica para Video con subtítulo dinámico
+            const cap = `${tradutor.texto8[0]} *${usedPrefix}tomp3* ${tradutor.texto8[1]}`;
+            await conn.sendMessage(m.chat, { 
+                video: { url: download }, 
+                caption: cap,
+                fileName: `tiktok.mp4`
+            }, { quoted: m });
+        }
+        
+        await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+    } catch (e) {
+        console.error(e);
+        await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
+        throw tradutor.texto9;
+    }
+};
 
-const apiUrl = `${api.url}/dl/tiktok?url=${text}&key=${api.key}`
+handler.command = /^(tiktok|ttdl|tiktokdl|tiktoknowm|tt|ttnowm|tiktokaudio)$/i;
+export default handler;
 
-const res = await fetch(apiUrl)
+async function fetchDownloadLinks(url) {
+    const SITE_URL = 'https://instatiktok.com/';
+    try {
+        const form = new URLSearchParams();
+        form.append('url', url);
+        
+        const res = await axios.post(`${SITE_URL}api`, form.toString(), {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Referer': SITE_URL,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/110.0.0.0 Safari/537.36'
+            }
+        });
 
-if (!res.ok) throw new Error(`API error ${res.status}`)
+        const html = res?.data?.html;
+        if (!html) return null;
 
-const json = await res.json()
-
-const data = json.data
-
-if (!data) throw new Error('Sin datos')
-
-const {
-title = 'Sin título',
-dl,
-duration,
-author = {},
-stats = {},
-music = {},
-} = data
-
-const caption =
-`ㅤ۟∩　ׅ　★ ໌　ׅ　🅣𝗂𝗄𝖳𝗈𝗄 🅓ownload　ׄᰙ\n\n` +
-`𖣣ֶㅤ֯⌗ ✿ ⬭ *Título:* ${title}\n` +
-`𖣣ֶㅤ֯⌗ ★ ⬭ *Autor:* ${author.nickname || author.unique_id || 'Desconocido'}\n` +
-`𖣣ֶㅤ֯⌗ ❖ ⬭ *Duración:* ${duration || 'N/A'}\n` +
-`𖣣ֶㅤ֯⌗ ♡ ⬭ *Likes:* ${(stats.likes || 0).toLocaleString()}\n` +
-`𖣣ֶㅤ֯⌗ ꕥ ⬭ *Comentarios:* ${(stats.comments || 0).toLocaleString()}\n` +
-`𖣣ֶㅤ֯⌗ ❒ ⬭ *Vistas:* ${(stats.views || stats.plays || 0).toLocaleString()}\n` +
-`𖣣ֶㅤ֯⌗ ☄︎ ⬭ *Compartidos:* ${(stats.shares || 0).toLocaleString()}\n` +
-`𖣣ֶㅤ֯⌗ ⚡︎ ⬭ *Audio:* ${music.title ? music.title + ' -' : 'Desconocido'} ${music.author || ''}`
-
-await conn.sendMessage(m.chat, {
-video: { url: dl },
-caption
-}, { quoted: m })
-
-} catch (e) {
-
-throw `${tradutor.texto9}`
-
+        const $ = cheerio.load(html);
+        const links = [];
+        $('a.btn').each((_, el) => {
+            const link = $(el).attr('href');
+            if (link && link.startsWith('http')) links.push(link);
+        });
+        return links;
+    } catch (err) {
+        return null;
+    }
 }
 
+function getDownloadLink(links) {
+    // Priorizamos HD, luego sin marca de agua, luego el primero disponible
+    return links.find(link => /hdplay|nowatermark/i.test(link)) || links[0];
 }
-
-handler.command = /^(tiktok|ttdl|tiktokdl|tt|tiktoknowm)$/i
-
-export default handler
