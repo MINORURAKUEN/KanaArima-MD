@@ -11,6 +11,7 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
   if (!text) return m.reply(`*${tradutor.texto1}*`);
 
   try {
+    // Consulta GraphQL optimizada para imágenes EXTRA GRANDES y Banners
     const query = `
     query ($search: String) {
       Media (search: $search, type: ANIME) {
@@ -25,7 +26,11 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
         season
         status
         description
-        coverImage { large }
+        bannerImage
+        coverImage { 
+          extraLarge  # MÁXIMA CALIDAD DE PORTADA DISPONIBLE
+          large
+        }
       }
     }`;
 
@@ -52,7 +57,16 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
     const titulo = result.title.romaji || result.title.english;
     const estudios = result.studios.nodes.map(s => s.name).join(', ') || 'N/A';
     const generos = result.genres.join(', ') || 'N/A';
-    const estado = result.status === 'FINISHED' ? 'Finalizado' : result.status === 'RELEASING' ? 'En emisión' : result.status;
+    
+    // Traducción de estados técnicos
+    const estadosRespaldo = {
+        'FINISHED': 'Finalizado',
+        'RELEASING': 'En emisión',
+        'NOT_YET_RELEASED': 'Próximamente',
+        'CANCELLED': 'Cancelado',
+        'HIATUS': 'En pausa'
+    };
+    const estado = estadosRespaldo[result.status] || result.status;
 
     const AnimeInfo = `
 ㊙️ ❘ Título: ${titulo}
@@ -68,9 +82,12 @@ const handler = async (m, { conn, text, usedPrefix, command }) => {
 ⏳ ❘ Estado: ${estado}
 📜 ❘ Sinopsis: ${sinopsisTranslate}`;
 
-    const image = result.coverImage.large;
+    // SELECCIÓN INTELIGENTE DE IMAGEN DE ALTA CALIDAD
+    // Prioridad: ExtraLarge Cover -> Banner -> Large Cover
+    const imageHD = result.coverImage.extraLarge || result.bannerImage || result.coverImage.large;
 
-    await conn.sendFile(m.chat, image, 'anime.jpg', AnimeInfo.trim(), m);
+    // Enviamos el archivo con la URL de alta resolución
+    await conn.sendFile(m.chat, imageHD, 'anime_hd.jpg', AnimeInfo.trim(), m);
 
   } catch (e) {
     console.error(e);
