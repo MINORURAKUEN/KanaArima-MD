@@ -1,69 +1,117 @@
 import fetch from 'node-fetch';
 import fs from 'fs';
 
-let handler = async (m, { conn, text, args, usedPrefix, command }) => {
-  const datas = global;
-  const idioma = datas.db.data.users[m.sender]?.language || global.defaultLenguaje;
-  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
-  const tradutor = _translate.plugins.descargas_tiktok;
-
-  // Validación de URL con los mensajes de tu sistema de idiomas
-  if (!text) throw `${tradutor.texto1} _${usedPrefix + command} https://vt.tiktok.com/ZSSm2fhLX/_`;
-  if (!/(?:https:?\/{2})?(?:w{3}|vm|vt|t)?\.?tiktok.com\/([^\s&]+)/gi.test(text)) {
-    throw `${tradutor.texto2} _${usedPrefix + command} https://vt.tiktok.com/ZSSm2fhLX/_`;
-  }
-
-  // Definición de Servidores (Asegúrate de que estas variables/URLs estén definidas en tu global o cámbialas por strings)
-  const servers = [
-    { name: 'Server Masha', url: global.masha || 'https://api.masha.xyz' }, 
-    { name: 'Server Alya', url: global.alya || 'https://api.alya.xyz' },
-    { name: 'Server Masachika', url: global.masachika || 'https://api.masachika.xyz' }
-  ];
-
-  // Reordenar aleatoriamente para balancear la carga entre servidores
-  const shuffledServers = servers.sort(() => Math.random() - 0.5);
-  
-  await m.reply(tradutor.texto3); // Mensaje de "Descargando..."
-
-  let success = false;
-  let lastError = '';
-
-  for (let server of shuffledServers) {
-    const endpoint = `${server.url}/Tiktok_videodl?url=${encodeURIComponent(args[0])}`;
-    
+export default {
+  command: ['tiktok', 'tt', 'ttdl', 'tiktokdl'],
+  category: 'downloader',
+  run: async (client, m, args, command) => {
+    // 1. Configuración de Idioma y Traducciones (del primer código)
+    const datas = global;
+    const idioma = datas.db?.data?.users[m.sender]?.language || global.defaultLenguaje || 'es';
+    let tradutor;
     try {
-      const res = await fetch(endpoint);
-      if (!res.ok) throw `Status ${res.status}`;
-
-      const json = await res.json();
-      
-      // Intentamos obtener la URL del video del JSON (soporta varios formatos de respuesta)
-      const videoUrl = json.video_url || json.result?.video || json.data?.url;
-      
-      if (!videoUrl) throw `El servidor no devolvió una URL válida`;
-
-      const cap = `${tradutor.texto8[0]} _${usedPrefix}tomp3_ ${tradutor.texto8[1]}\n\n💫 *Servidor:* ${server.name}`;
-
-      // Enviamos el archivo usando el método de tu bot
-      await conn.sendFile(m.chat, videoUrl, 'tiktok.mp4', cap, m);
-
-      success = true;
-      break; // Éxito, salimos del ciclo for
-    } catch (err) {
-      lastError = `Fallo en ${server.name}: ${err.message || err}`;
-      console.log(lastError);
-      // El ciclo continúa automáticamente con el siguiente servidor
+        const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
+        tradutor = _translate.plugins.descargas_tiktok;
+    } catch {
+        tradutor = { texto3: '📥 Procesando...', texto9: '❌ Error fatal.' };
     }
-  }
 
-  if (!success) {
-    // Si todos fallan, lanzamos el error final del archivo de idioma
-    throw `${tradutor.texto9}\n\n*Detalle técnico:* ${lastError}`;
-  }
+    if (!args.length) return m.reply(`✿ Ingresa un *término* o *enlace* de TikTok.`);
+
+    const urls = args.filter(arg => /(?:https:?\/{2})?(?:w{3}|vm|vt|t)?\.?tiktok.com\/([^\s&]+)/gi.test(arg));
+    
+    // Lista de servidores de respaldo (Failover)
+    const backupServers = [
+      { name: 'Masha API', url: global.masha || 'https://api.masha.xyz' }, 
+      { name: 'Alya API', url: global.alya || 'https://api.alya.xyz' },
+      { name: 'Masachika API', url: global.masachika || 'https://api.masachika.xyz' }
+    ].sort(() => Math.random() - 0.5);
+
+    // --- FUNCIÓN PARA DESCARGAR (Lógica de redundancia) ---
+    const downloadVideo = async (url) => {
+      // Intento 1: Tu API Principal
+      try {
+        const apiUrl = `${global.api?.url}/dl/tiktok?url=${url}&key=${global.api?.key}`;
+        const res = await fetch(apiUrl);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.data) return json.data;
+        }
+      } catch (e) {}
+
+      // Intentos de respaldo: Servidores aleatorios
+      for (let server of backupServers) {
+        try {
+          const res = await fetch(`${server.url}/Tiktok_videodl?url=${encodeURIComponent(url)}`);
+          if (!res.ok) continue;
+          const json = await res.json();
+          const videoUrl = json.video_url || json.result?.video || json.data?.url;
+          if (videoUrl) return { dl: videoUrl, title: 'TikTok Video', backup: server.name };
+        } catch (e) { continue; }
+      }
+      return null;
+    };
+
+    // --- LÓGICA PRINCIPAL ---
+    if (urls.length) {
+      await m.reply(tradutor.texto3);
+      
+      if (urls.length > 1) {
+        // MODO ÁLBUM (Varios Links)
+        const medias = [];
+        for (const url of urls.slice(0, 10)) {
+          const data = await downloadVideo(url);
+          if (data) {
+            medias.push({
+              type: 'video',
+              data: { url: data.dl },
+              caption: `✅ Enlace: ${url}`
+            });
+          }
+        }
+        if (medias.length) return await client.sendAlbumMessage(m.chat, medias, { quoted: m });
+        else return m.reply(`✿ No se pudo procesar ningún enlace.`);
+
+      } else {
+        // MODO ÚNICO (Un Link)
+        const data = await downloadVideo(urls[0]);
+        if (!data) return m.reply(`✿ Error: No se pudo obtener el video.`);
+
+        const caption = genCaption(data);
+        await client.sendMessage(m.chat, { video: { url: data.dl }, caption }, { quoted: m });
+      }
+
+    } else {
+      // MODO BÚSQUEDA (Texto)
+      const query = args.join(" ");
+      try {
+        const apiUrl = `${global.api?.url}/search/tiktok?query=${encodeURIComponent(query)}&key=${global.api?.key}`;
+        const res = await fetch(apiUrl);
+        const json = await res.json();
+        const results = json.data;
+
+        if (!results || results.length === 0) return m.reply(`❖ No se encontraron resultados para: ${query}`);
+
+        const data = results[0];
+        const caption = genCaption(data);
+        await client.sendMessage(m.chat, { video: { url: data.dl }, caption }, { quoted: m });
+      } catch (e) {
+        m.reply('✿ Error al realizar la búsqueda.');
+      }
+    }
+  },
 };
 
-handler.help = ['tiktok', 'tt'].map(v => v + ' <url>');
-handler.tags = ['downloader'];
-handler.command = /^(tt|tiktok|ttdl|tiktokdl)$/i;
-
-export default handler;
+// Generador de plantillas visuales
+function genCaption(data) {
+  const { title = 'Sin título', author = {}, stats = {}, music = {}, duration, backup } = data;
+  return `ㅤ۟∩　ׅ　★ ໌　ׅ　🅣𝗂𝗄𝖳𝗈𝗄 🅓ownload　ׄᰙ\n\n` +
+         `𖣣ֶㅤ֯⌗ ✿ ⬭ *Título:* ${title}\n` +
+         `𖣣ֶㅤ֯⌗ ★ ⬭ *Autor:* ${author.nickname || author.unique_id || 'Desconocido'}\n` +
+         `𖣣ֶㅤ֯⌗ ❖ ⬭ *Duración:* ${duration || 'N/A'}\n` +
+         `𖣣ֶㅤ֯⌗ ♡ ⬭ *Likes:* ${(stats.likes || 0).toLocaleString()}\n` +
+         `𖣣ֶㅤ֯⌗ ꕥ ⬭ *Comentarios:* ${(stats.comments || 0).toLocaleString()}\n` +
+         `𖣣ֶㅤ֯⌗ ❒ ⬭ *Vistas:* ${(stats.views || stats.plays || 0).toLocaleString()}\n` +
+         `𖣣ֶㅤ֯⌗ ⚡︎ ⬭ *Audio:* ${music.title || 'Original'} ${music.author ? '- ' + music.author : ''}` +
+         `${backup ? `\n\n⚙️ *Source:* ${backup}` : ''}`;
+}
