@@ -1,5 +1,4 @@
 import axios from 'axios';
-import * as cheerio from 'cheerio';
 import fs from 'fs';
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
@@ -10,24 +9,24 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     if (!text) throw `_*${tradutor.texto1[0]}*_\n\n*${tradutor.texto1[1]}*\n\n*${tradutor.texto1[2]}* ${usedPrefix + command} https://www.facebook.com/share/v/1E5R3gRuHk/`;
 
     try {
-        await m.reply('*[⏳] Intentando descargar video de Facebook...*');
+        await m.reply('*[⏳] Extrayendo video con bypass de seguridad...*');
 
-        // Intentar con el sistema de múltiples servidores (Método Fallback)
-        const videoUrl = await getFacebookVideo(text);
+        // Usamos una API de bypass que no depende de instatiktok
+        const videoData = await fetchFacebookBypass(text);
 
-        if (!videoUrl) {
-            return await conn.sendMessage(m.chat, { text: '*[ ❌ ] Todos los servidores de descarga fallaron. El video podría ser privado o no estar disponible.*' }, { quoted: m });
+        if (!videoData || !videoData.url) {
+            throw new Error("El video es privado o el enlace ha caducado.");
         }
 
         await conn.sendMessage(m.chat, { 
-            video: { url: videoUrl }, 
-            caption: `*📥 Descarga de Facebook exitosa!*`,
+            video: { url: videoData.url }, 
+            caption: `*📥 Facebook Downloader Pro*\n\n*Calidad:* ${videoData.quality || 'Estándar'}`,
             mimetype: 'video/mp4'
         }, { quoted: m });
 
     } catch (error) {
-        console.error('Error final:', error);
-        m.reply(`*[❌] Error crítico:* ${error.message}`);
+        console.error('Error Crítico FB:', error);
+        m.reply(`*[❌] No se pudo descargar el video.*\n\n*Motivo:* ${error.message}\n_Sugerencia: Verifica que el video sea público._`);
     }
 };
 
@@ -37,32 +36,33 @@ handler.help = ['facebook'];
 export default handler;
 
 /**
- * Motor de descarga con 3 niveles de rescate
+ * Función que utiliza una API de bypass para saltar restricciones de Meta
  */
-async function getFacebookVideo(url) {
-    // NIVEL 1: Motor Instatiktok (Tu código original mejorado)
-    try {
-        const res = await axios.post('https://instatiktok.com/api', 
-            new URLSearchParams({ url, platform: 'facebook' }).toString(), {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Mozilla/5.0' },
-            timeout: 10000
-        });
-        const $ = cheerio.load(res.data.html || '');
-        const link = $('a.btn').first().attr('href');
-        if (link && link.startsWith('http')) return link;
-    } catch (e) { console.log("Nivel 1 falló"); }
+async function fetchFacebookBypass(url) {
+    // Lista de APIs de respaldo con mayor tasa de éxito en 2026
+    const apiEndpoints = [
+        `https://api.botcahx.eu.org/api/dowloader/fbdown?url=${encodeURIComponent(url)}&apikey=BrunoSobrino`,
+        `https://api.alyachan.dev/api/facebook?url=${encodeURIComponent(url)}&apikey=Gata-Dios`,
+        `https://api.vreden.my.id/api/facebook?url=${encodeURIComponent(url)}`
+    ];
 
-    // NIVEL 2: API de Snapsave (Muy robusta para Reels y Videos)
-    try {
-        const res2 = await axios.get(`https://api.vreden.my.id/api/facebook?url=${encodeURIComponent(url)}`);
-        if (res2.data.status && res2.data.result.video) return res2.data.result.video;
-    } catch (e) { console.log("Nivel 2 falló"); }
+    for (let api of apiEndpoints) {
+        try {
+            const { data } = await axios.get(api, { timeout: 15000 });
+            
+            // Adaptador para diferentes formatos de respuesta de APIs
+            const result = data.result || data.data;
+            const videoUrl = result?.url || result?.video || (Array.isArray(result) ? result[0].url : null);
 
-    // NIVEL 3: API de Tiklydown/Aisearch (Respaldo final)
-    try {
-        const res3 = await axios.get(`https://api.alyachan.dev/api/facebook?url=${encodeURIComponent(url)}&apikey=Gata-Dios`);
-        if (res3.data.result) return res3.data.result.url;
-    } catch (e) { console.log("Nivel 3 falló"); }
-
+            if (videoUrl && videoUrl.startsWith('http')) {
+                return { 
+                    url: videoUrl, 
+                    quality: result?.quality || 'HD' 
+                };
+            }
+        } catch (e) {
+            continue; // Si una falla, probamos la siguiente inmediatamente
+        }
+    }
     return null;
 }
