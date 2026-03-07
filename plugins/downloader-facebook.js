@@ -1,76 +1,62 @@
 import fetch from 'node-fetch'
 
-let handler = async (m, { conn, args, usedPrefix, command }) => {
+let handler = async (m, { args, command, conn }) => {
+  if (!args[0]) throw `*⚠️ Uso correcto: .${command} <enlace de Facebook>*`
 
-if (!args[0]) {
-return conn.reply(m.chat, `⚠️ Uso correcto:\n${usedPrefix + command} https://facebook.com/video`, m)
+  await m.reply('*[⏳] Procesando video de Facebook...*')
+
+  try {
+    const videoUrl = await getFacebookVideo(args[0])
+
+    if (!videoUrl) throw '*[ ❌ ] Todos los servidores fallaron. El video puede ser privado o el link es inválido.*'
+
+    await conn.sendFile(m.chat, videoUrl, 'facebook.mp4', '✅ *Aquí tienes tu video de Facebook*', m)
+
+  } catch (e) {
+    console.error(e)
+    m.reply(`❌ *Ocurrió un error:* ${e.message || e}`)
+  }
 }
 
-try {
+/**
+ * Función que prueba múltiples APIs en cadena
+ */
+async function getFacebookVideo(link) {
+  const encoded = encodeURIComponent(link)
+  
+  // Lista de APIs en orden de prioridad
+  const apis = [
+    `https://eliasar-yt-api.vercel.app/api/facebookdl?link=${encoded}`,
+    `https://api.botcahx.eu.org/api/dowloader/fbdown?url=${encoded}&apikey=BrunoSobrino`,
+    `https://api.vreden.my.id/api/facebook?url=${encoded}`
+  ]
 
-let url = args[0]
+  for (const url of apis) {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) continue
 
-let res = await fetch(`https://api.ryzendesu.vip/api/downloader/fb?url=${url}`)
-let json = await res.json()
+      const json = await res.json()
+      
+      // Adaptador para diferentes estructuras de JSON
+      let result = null
+      if (json.status && json.data && json.data.length > 0) {
+        result = json.data[0].url // Estructura de Eliasaryt
+      } else if (json.result) {
+        result = json.result.url || json.result.video || (Array.isArray(json.result) ? json.result[0].url : null)
+      }
 
-if (!json.status) throw 'No se pudo obtener el video'
-
-let video = json.data.hd || json.data.sd
-
-await conn.sendMessage(
-m.chat,
-{
-video: { url: video },
-caption: `📥 *Facebook Downloader*\n🔗 ${url}`
-},
-{ quoted: m }
-)
-
-} catch (e) {
-
-conn.reply(m.chat, '❌ Error al descargar el video de Facebook', m)
-
+      if (result && result.startsWith('http')) return result
+    } catch (err) {
+      console.log(`Fallo en una API, intentando la siguiente...`)
+      continue 
+    }
+  }
+  return null
 }
 
-}
-
-handler.help = ['facebook <url>']
+handler.help = ['facebook', 'fb'].map(v => v + ' <enlace>')
 handler.tags = ['downloader']
-handler.command = /^(fb|facebook|fbdl)$/i
+handler.command = ['fb', 'facebook', 'fbdl']
 
 export default handler
-const form = new URLSearchParams()
-
-form.append('url', text)
-form.append('platform', platform)
-form.append('siteurl', SITE_URL)
-
-return { SITE_URL, form }
-
-}
-
-
-function getDownloadLink(platform, links) {
-
-if (platform === 'facebook') {
-return links.at(-1)
-}
-
-if (platform === 'tiktok') {
-return links.find(link => /hdplay/.test(link)) || links[0]
-}
-
-if (platform === 'instagram') {
-return links
-}
-
-return null
-
-}        return links;
-    } else if (platform === 'tiktok') {
-        return links.find(link => /hdplay/.test(link)) || links[0];
-    } else if (platform === 'facebook') {
-        return links.at(-1);
-    }
-    return null;
-}
