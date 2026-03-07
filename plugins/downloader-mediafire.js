@@ -4,22 +4,22 @@ import { lookup } from 'mime-types';
 import fs from 'fs';
 import { performance } from 'perf_hooks';
 
-const handler = async (m, { conn, args }) => {
-  if (!args[0]) throw `_*< DESCARGAS - MEDIAFIRE />*_\n\n*[ ℹ️ ] Ingrese un enlace de MediaFire.*`;
-
+const handler = async (m, { conn, args, usedPrefix, command }) => {
   // Tu firma personalizada
   const firma = '᭄🅜֟፝ıηͨσ‍ͥяͩυ🧸⃝꙰ཻུ⸙͎';
+
+  if (!args[0]) throw `_*< DESCARGAS - MEDIAFIRE />*_\n\n*[ ℹ️ ] Ingrese un enlace de MediaFire.*\n\n*[ 💡 ] Ejemplo:* ${usedPrefix + command} https://www.mediafire.com/file/ejemplo\n\n${firma}`;
 
   try {
     const startTime = performance.now();
     const { name, link, sizeH } = await mediafireDl(args[0]);
 
-    const { key } = await m.reply(`🚀 *Iniciando descarga pesada...*\n📄 *Archivo:* ${name}\n⚖️ *Tamaño:* ${sizeH}\n\n_Procesando archivo de gran tamaño..._\n\n${firma}`);
+    const { key } = await m.reply(`🚀 *Descargando archivo pesado...*\n📄 *Archivo:* ${name}\n⚖️ *Tamaño:* ${sizeH}\n\n_Procesando datos para envío íntegro..._\n\n${firma}`);
 
     const t1 = performance.now();
     const response = await axios.get(link, { 
         responseType: 'arraybuffer',
-        timeout: 0, // Desactivamos el límite de tiempo para archivos de +1GB
+        timeout: 0, 
         maxContentLength: Infinity,
         maxBodyLength: Infinity,
         headers: { 
@@ -33,7 +33,7 @@ const handler = async (m, { conn, args }) => {
     const mime = lookup(name) || 'application/octet-stream';
     const downloadSpeed = ((buffer.length / (1024 * 1024)) / ((t2 - t1) / 1000)).toFixed(2);
 
-    // ENVIAR: Incluimos la firma en el caption del archivo
+    // Envío del documento con la firma en el pie de página
     await conn.sendMessage(m.chat, { 
         document: buffer, 
         fileName: name, 
@@ -54,26 +54,30 @@ const handler = async (m, { conn, args }) => {
 
   } catch (error) {
     console.error('Error:', error.message);
-    await m.reply(`❌ *Error:* El archivo es demasiado pesado para la RAM del servidor o el enlace expiró.\n\n${firma}`);
+    await m.reply(`❌ *Error:* No se pudo procesar el comando. Verifica el enlace o el estado del servidor.\n\n${firma}`);
   }
 };
 
-handler.command = /^(mediafire|mediafiredl|dlmediafire)$/i;
+// CORRECCIÓN DE COMANDO: Ahora acepta .mediafire y .mf
+handler.command = /^(mediafire|mediafiredl|dlmediafire|mf)$/i;
 export default handler;
 
-// La función mediafireDl se mantiene igual que la versión anterior para extraer el link
 async function mediafireDl(url) {
   const res = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }});
   const $ = cheerio.load(res.data);
   const downloadButton = $('#downloadButton');
   let link = downloadButton.attr('href');
+  
   if (!link || link.includes('javascript:void(0)')) {
     link = res.data.match(/href="(https:\/\/download\d+\.mediafire\.com[^"]+)"/)?.[1];
   }
+  
   let name = $('.promoDownloadName').first().attr('title') || $('.filename').first().text().trim();
   name = name.replace(/\s+/g, ' ').split('\n')[0].trim();
+  
   const urlExt = link.split('.').pop().split('?')[0];
   if (!name.toLowerCase().endsWith(urlExt.toLowerCase())) name += `.${urlExt}`;
+  
   const sizeH = downloadButton.text().replace(/Download|[\(\)]|\s+/g, ' ').trim();
   return { name, link, sizeH };
 }
