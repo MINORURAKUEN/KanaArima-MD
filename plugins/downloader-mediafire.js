@@ -3,30 +3,48 @@ import cheerio from 'cheerio';
 import { lookup } from 'mime-types';
 import fs from 'fs';
 import { performance } from 'perf_hooks';
+import { join } from 'path';
 
 const handler = async (m, { conn, args }) => {
   if (!args[0]) throw `_*< DESCARGAS - MEDIAFIRE />*_\n\n*[ ℹ️ ] Ingrese un enlace de MediaFire.*`;
 
+  // Creamos una carpeta temporal si no existe
+  const tmpDir = './tmp';
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir);
+
   try {
     const startTime = performance.now();
-    const { name, size, link, mime } = await mediafireDl(args[0]);
+    const { name, link, mime } = await mediafireDl(args[0]);
 
-    // Mensaje de inicio
-    const { key } = await m.reply(`🚀 *Descargando:* ${name}\n⚖️ *Tamaño:* ${size}`);
+    const { key } = await m.reply(`⏳ *Descargando archivo al servidor...*\n_Esto evita el error de 0 kB._`);
 
-    // DESCARGA: Obtenemos el archivo en un Buffer para asegurar que no llegue en 0 kB
+    const filePath = join(tmpDir, `${Date.now()}_${name}`);
+    const writer = fs.createWriteStream(filePath);
+
+    // 1. Descarga real al disco
     const t1 = performance.now();
-    const res = await axios.get(link, { 
-        responseType: 'arraybuffer',
-        headers: { 'User-Agent': 'Mozilla/5.0' }
+    const response = await axios({
+      method: 'get',
+      url: link,
+      responseType: 'stream',
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
+
+    response.data.pipe(writer);
+
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
     });
     const t2 = performance.now();
 
-    const buffer = Buffer.from(res.data);
-    const downloadSpeed = ((buffer.length / (1024 * 1024)) / ((t2 - t1) / 1000)).toFixed(2);
+    // 2. Obtener estadísticas del archivo físico
+    const stats = fs.statSync(filePath);
+    const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+    const downloadSpeed = (fileSizeMB / ((t2 - t1) / 1000)).toFixed(2);
 
-    // SUBIDA: Enviamos el archivo completo
-    await conn.sendFile(m.chat, buffer, name, '', m, null, { 
+    // 3. Enviar el archivo desde el disco
+    await conn.sendFile(m.chat, filePath, name, '', m, null, { 
       mimetype: mime, 
       asDocument: true 
     });
@@ -34,18 +52,20 @@ const handler = async (m, { conn, args }) => {
     const totalTime = (performance.now() - startTime) / 1000;
 
     const finalCaption = `
-✅ *¡DESCARGA COMPLETADA!*
-
+✅ *¡LOGRADO!*
 📄 *Archivo:* ${name}
-⚖️ *Tamaño:* ${size}
+⚖️ *Tamaño:* ${fileSizeMB} MB
 ⏱️ *Tiempo total:* ${totalTime.toFixed(2)}s
 ⚡ *Vel. Descarga:* ${downloadSpeed} MB/s`.trim();
 
     await conn.sendMessage(m.chat, { text: finalCaption, edit: key });
 
+    // 4. Limpieza: Borrar archivo temporal para no llenar el disco
+    fs.unlinkSync(filePath);
+
   } catch (error) {
     console.error(error);
-    await m.reply('❌ Error: El archivo es demasiado grande o el enlace expiró.');
+    await m.reply('❌ Error crítico al descargar. El enlace podría estar roto.');
   }
 };
 
@@ -62,17 +82,12 @@ async function mediafireDl(url) {
     link = res.data.match(/href="(https:\/\/download\d+\.mediafire\.com[^"]+)"/)?.[1];
   }
 
-  // Limpieza de nombre única (evita el error de la captura anterior)
   let name = $('.promoDownloadName').first().attr('title') || $('.filename').first().text().trim();
   name = name.replace(/\s+/g, ' ').split('\n')[0].trim();
   
   const urlExt = link.split('.').pop().split('?')[0];
   if (!name.toLowerCase().endsWith(urlExt.toLowerCase())) name += `.${urlExt}`;
 
-  const size = downloadButton.text().replace(/Download|[\(\)]|\s+/g, ' ').trim();
   const mime = lookup(name) || 'application/octet-stream';
-
-  return { name, size, link, mime };
-}
-  return { name, size, link, mime };
+  return { name, link, mime };
 }
