@@ -1,105 +1,44 @@
-import axios from 'axios'
-import * as cheerio from 'cheerio'
-import fs from 'fs'
+import fetch from 'node-fetch'
 
-let handler = async (m, { args, conn, text, usedPrefix, command }) => {
+let handler = async (m, { conn, args, usedPrefix, command }) => {
 
-const user = global.db.data.users[m.sender] || {}
-const idioma = user.language || global.defaultLenguaje
-
-const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`))
-const tradutor = _translate.plugins.descargas_facebook
-
-if (!text) throw `_*${tradutor.texto1[0]}*_\n\n*${tradutor.texto1[1]}*\n\n*${tradutor.texto1[2]}* ${usedPrefix + command} https://www.facebook.com/...`
-
-const platform = 'facebook'
+if (!args[0]) {
+return conn.reply(m.chat, `⚠️ Uso correcto:\n${usedPrefix + command} https://facebook.com/video`, m)
+}
 
 try {
 
-const links = await fetchDownloadLinks(text, platform)
+let url = args[0]
 
-if (!links || links.length === 0) {
-return conn.sendMessage(m.chat, { text: '*[ ❌ ] No se encontraron enlaces de descarga.*' }, { quoted: m })
-}
+let res = await fetch(`https://api.ryzendesu.vip/api/downloader/fb?url=${url}`)
+let json = await res.json()
 
-let download = getDownloadLink(platform, links)
+if (!json.status) throw 'No se pudo obtener el video'
 
-if (!download) {
-return conn.sendMessage(m.chat, { text: '*[ ❌ ] Error al obtener el enlace de descarga.*' }, { quoted: m })
-}
+let video = json.data.hd || json.data.sd
 
-const ext = download.includes('.mp4') ? 'mp4' : 'jpg'
-const caption = `📥 Descarga de ${platform} exitosa`
-
-if (ext === 'mp4') {
-await conn.sendMessage(m.chat, { video: { url: download }, caption }, { quoted: m })
-} else {
-await conn.sendMessage(m.chat, { image: { url: download }, caption }, { quoted: m })
-}
-
-} catch (error) {
-
-console.log(error)
-
-conn.sendMessage(
+await conn.sendMessage(
 m.chat,
-{ text: `*[❌] Error:*\n${error.message}` },
+{
+video: { url: video },
+caption: `📥 *Facebook Downloader*\n🔗 ${url}`
+},
 { quoted: m }
 )
 
-}
+} catch (e) {
+
+conn.reply(m.chat, '❌ Error al descargar el video de Facebook', m)
 
 }
 
-handler.command = /^(facebook|fb|facebookdl|fbdl)$/i
-handler.tags = ['downloader']
+}
+
 handler.help = ['facebook <url>']
+handler.tags = ['downloader']
+handler.command = /^(fb|facebook|fbdl)$/i
 
 export default handler
-
-
-async function fetchDownloadLinks(text, platform) {
-
-const { SITE_URL, form } = createApiRequest(text, platform)
-
-const res = await axios.post(`${SITE_URL}api`, form.toString(), {
-headers: {
-'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-'Origin': SITE_URL,
-'Referer': SITE_URL,
-'User-Agent': 'Mozilla/5.0',
-'X-Requested-With': 'XMLHttpRequest'
-}
-})
-
-const html = res?.data?.html
-
-if (!html || res?.data?.status !== 'success') {
-return null
-}
-
-const $ = cheerio.load(html)
-const links = []
-
-$('a.btn[href^="http"]').each((_, el) => {
-
-const link = $(el).attr('href')
-
-if (link && !links.includes(link)) {
-links.push(link)
-}
-
-})
-
-return links
-
-}
-
-
-function createApiRequest(text, platform) {
-
-const SITE_URL = 'https://instatiktok.com/'
-
 const form = new URLSearchParams()
 
 form.append('url', text)
