@@ -1,73 +1,106 @@
-import fs from "fs"
-import axios from "axios"
-import uploadImage from "../src/libraries/uploadImage.js"
+import axios from 'axios';
+import * as cheerio from 'cheerio';
+import fs from 'fs';
 
-const handler = async (m, { conn, usedPrefix, command }) => {
-  const idioma = global.db.data.users[m.sender]?.language || global.defaultLenguaje
-  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`))
-  const tradutor = _translate.plugins.herramientas_hd
+let handler = async (m, { args, conn, text, usedPrefix, command }) => {
+    const idioma = global.db.data.users[m.sender]?.language || global.defaultLenguaje;
+    const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
+    const tradutor = _translate.plugins.descargas_facebook;
 
-  try {
-    const q = m.quoted ? m.quoted : m
-    const mime = (q.msg || q).mimetype || q.mediaType || ""
+    // Validación de texto/URL
+    if (!text) throw `_*${tradutor.texto1[0]}*_\n\n*${tradutor.texto1[1]}*\n\n*${tradutor.texto1[2]}* ${usedPrefix + command} https://www.facebook.com/share/v/1E5R3gRuHk/`;
 
-    if (!mime) throw `*${tradutor.texto1} ${usedPrefix + command}*`
-    if (!/image\/(jpe?g|png)/.test(mime)) throw `*${tradutor.texto2[0]}* (${mime}) ${tradutor.texto2[1]}`
-
-    await m.reply(tradutor.texto3)
-
-    const img = await q.download()
-    const fileUrl = await uploadImage(img)
+    const platform = 'facebook';
     
-    // Función de rescate con nuevos servidores verificados
-    const banner = await upscaleFinalResort(fileUrl)
+    try {
+        await m.reply('*[⏳] Procesando tu solicitud de Facebook...*');
 
-    await conn.sendMessage(m.chat, { 
-        image: banner, 
-        caption: `✅ *IMAGEN OPTIMIZADA*` 
-    }, { quoted: m })
+        const links = await fetchDownloadLinks(text, platform, conn, m);
+        if (!links || links.length === 0) {
+            return await conn.sendMessage(m.chat, { text: '*[ ❌ ] No se encontraron enlaces de descarga válidos.*' }, { quoted: m });
+        }
 
-  } catch (e) {
-    console.error("Fallo total en HD:", e)
-    m.reply(`❌ *SISTEMA SATURADO*\n\nNingún servidor de IA respondió. Esto pasa cuando hay demasiados usuarios usando el comando a nivel mundial. Reintenta en 5 minutos.`)
-  }
+        // Seleccionamos el mejor enlace (usualmente el último en Facebook es el de mayor calidad)
+        let download = getDownloadLink(platform, links);
+
+        if (!download) {
+            return await conn.sendMessage(m.chat, { text: '*[ ❌ ] Error al procesar el enlace final.*' }, { quoted: m });
+        }
+
+        const caption = `*📥 Descarga de Facebook exitosa!*\n\n_Calidad detectada: Alta_`;
+
+        // Enviamos el video
+        await conn.sendMessage(m.chat, { 
+            video: { url: download }, 
+            caption: caption,
+            mimetype: 'video/mp4',
+            fileName: `fb_video.mp4`
+        }, { quoted: m });
+
+    } catch (error) {
+        console.error('Error en facebook downloader:', error);
+        return await conn.sendMessage(m.chat, { text: `*[❌] Ocurrió un error inesperado:*\n${error.message || error}` }, { quoted: m });
+    }
+};
+
+handler.command = /^(facebook|fb|facebookdl|fbdl)$/i;
+handler.tags = ['downloader'];
+handler.help = ['facebook'];
+export default handler;
+
+/**
+ * Función para extraer enlaces usando el motor de instatiktok (scraping)
+ */
+async function fetchDownloadLinks(text, platform, conn, m) {
+    try {
+        const SITE_URL = 'https://instatiktok.com/';
+        const form = new URLSearchParams();
+        form.append('url', text);
+        form.append('platform', platform);
+
+        const res = await axios.post(`${SITE_URL}api`, form.toString(), {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Origin': SITE_URL,
+                'Referer': SITE_URL,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            timeout: 20000 // 20 segundos de espera
+        });
+
+        const html = res?.data?.html;
+        
+        if (!html || res?.data?.status !== 'success') {
+            return null;
+        }
+
+        const $ = cheerio.load(html);
+        const links = [];
+        
+        // Buscamos todos los botones de descarga con enlaces HTTP
+        $('a.btn').each((_, el) => {
+            const link = $(el).attr('href');
+            // Filtramos para asegurar que sean enlaces de video/media reales
+            if (link && link.startsWith('http') && !link.includes('facebook.com/sharer')) {
+                links.push(link);
+            }
+        });
+
+        return links;
+    } catch (e) {
+        console.error("Error en el fetch de la API:", e.message);
+        return null;
+    }
 }
 
-handler.help = ["remini", "hd", "enhance"]
-handler.tags = ["ai", "tools"]
-handler.command = ["remini", "hd", "enhance"]
-export default handler
-
-async function upscaleFinalResort(url) {
-  const encoded = encodeURIComponent(url)
-  
-  // Lista de APIs frescas (Marzo 2026)
-  const sources = [
-    `https://api.zyzen.me/api/remini?url=${encoded}`,
-    `https://api.diioffc.xyz/api/remini?url=${encoded}`,
-    `https://api.btch.bz/api/remini?url=${encoded}`
-  ]
-
-  for (let api of sources) {
-    try {
-      const res = await axios.get(api, {
-        responseType: "arraybuffer",
-        timeout: 50000, // Damos más tiempo para procesar
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Accept': 'image/*'
-        }
-      })
-
-      // Verificamos que no sea un buffer vacío o un error disfrazado
-      if (res.status === 200 && res.data.byteLength > 2000) {
-        return Buffer.from(res.data)
-      }
-    } catch (err) {
-      console.log(`Fallo en: ${api.split('/')[2]}`)
-      continue 
+/**
+ * Lógica para elegir el enlace correcto según la plataforma
+ */
+function getDownloadLink(platform, links) {
+    if (platform === 'facebook') {
+        // En Facebook, el sitio instatiktok suele poner el HD al final
+        return links.length > 1 ? links[0] : links[0]; 
     }
-  }
-
-  throw new Error("Servidores fuera de línea")
+    return links[0];
 }
