@@ -114,21 +114,3 @@ async function GDriveDl(url) {
     mimetype: data.headers.get('content-type') 
   };
 }
-      name: fileName,
-      parents: folderId ? [folderId] : [],
-    };
-    const media = {
-      mimeType: 'application/octet-stream',
-      body: (await fs.readFile(filePath)), // O usar fs.createReadStream
-    };
-
-    const file = await this.drive.files.create({
-      resource: fileMetadata,
-      media: media,
-      fields: 'id',
-    });
-    return file.data.id;
-  }
-}
-
-export { GoogleAuth, GoogleDrive };
