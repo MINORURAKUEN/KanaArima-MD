@@ -20,7 +20,7 @@ const handler = async (m, { conn, usedPrefix, command }) => {
     
     if (!fileUrl) throw "Error al subir la imagen al servidor temporal."
 
-    // Usamos la nueva función con la API comunitaria
+    // Llamamos a nuestra función blindada con 6 APIs
     const enhancedImage = await upscaleWithFreeAPI(fileUrl)
 
     await conn.sendMessage(m.chat, { 
@@ -39,41 +39,64 @@ handler.tags = ["ai", "tools"]
 handler.command = ["remini", "hd", "enhance"]
 export default handler
 
-// ✅ Función inteligente que usa las APIs de la comunidad de GataBot/Mystic
+// ✅ Función ultra-resistente con 6 APIs de respaldo
 async function upscaleWithFreeAPI(url) {
-  try {
-    // 🔗 API 1: Deliriuss (Muy usada en GataBot y Mystic)
-    // Si esta falla en el futuro, puedes cambiarla por: `https://api.siputzx.my.id/api/ai/remini?url=`
-    const endpoint = `https://deliriussapi-oficial.vercel.app/tools/remini?url=${encodeURIComponent(url)}`
-    
-    const response = await fetch(endpoint)
+  const encodedUrl = encodeURIComponent(url)
+  
+  // 🚀 El arsenal de 6 APIs rápidas y gratuitas
+  const apis = [
+    `https://api.siputzx.my.id/api/ai/remini?url=${encodedUrl}`,
+    `https://api.ryzendesu.vip/api/ai/remini?url=${encodedUrl}`,
+    `https://api.nyxs.pw/tools/remini?url=${encodedUrl}`,
+    `https://api.vreden.my.id/api/remini?url=${encodedUrl}`,
+    `https://api.dorratz.com/v2/image-upscale?url=${encodedUrl}`,
+    `https://aemt.me/remini?url=${encodedUrl}`
+  ]
 
-    if (!response.ok) {
-        throw new Error(`La API comunitaria devolvió el estado: ${response.status}`)
+  let lastError = ""
+
+  for (const endpoint of apis) {
+    try {
+      // Agregamos un pequeño timeout de seguridad (opcional pero recomendado)
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 20000) // 20 segundos máximo por API
+
+      const response = await fetch(endpoint, { signal: controller.signal })
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+          lastError = `Estado ${response.status} en ${endpoint.split('/')[2]}`
+          continue 
+      }
+
+      const contentType = response.headers.get("content-type") || ""
+
+      // 🧠 Extractor inteligente de imágenes
+      if (contentType.includes("application/json")) {
+          const json = await response.json()
+          
+          // Buscamos el link en todas las estructuras comunes de estas 6 APIs
+          let resultUrl = json.data?.url || json.data || json.url || json.result || json.image
+          
+          if (!resultUrl || typeof resultUrl !== 'string') continue 
+          
+          const imgResponse = await fetch(resultUrl)
+          const arrayBuffer = await imgResponse.arrayBuffer()
+          return Buffer.from(arrayBuffer)
+          
+      } else {
+          // Si la API es directa y devuelve el Buffer de la imagen
+          const arrayBuffer = await response.arrayBuffer()
+          return Buffer.from(arrayBuffer)
+      }
+      
+    } catch (err) {
+      // Si la API tarda más de 20s o está caída, guarda el error y pasa a la siguiente
+      lastError = err.name === 'AbortError' ? 'Tiempo de espera agotado' : err.message
+      continue 
     }
-
-    // 🧠 Lógica inteligente: Revisamos si la API devolvió un JSON o la imagen directamente
-    const contentType = response.headers.get("content-type")
-
-    if (contentType && contentType.includes("application/json")) {
-        // Si devuelve JSON (ej. { "data": "https://enlace-de-imagen.jpg" })
-        const json = await response.json()
-        const resultUrl = json.data || json.url || json.result // Soporta los formatos más comunes
-        
-        if (!resultUrl) throw new Error("La API no devolvió el enlace de la imagen.")
-        
-        // Descargamos la imagen ya mejorada
-        const imgResponse = await fetch(resultUrl)
-        const arrayBuffer = await imgResponse.arrayBuffer()
-        return Buffer.from(arrayBuffer)
-        
-    } else {
-        // Si la API devuelve la imagen directamente como Buffer
-        const arrayBuffer = await response.arrayBuffer()
-        return Buffer.from(arrayBuffer)
-    }
-    
-  } catch (err) {
-    throw new Error(`Fallo en el servicio HD: ${err.message}`)
   }
+  
+  // Si ocurrió un apocalipsis y las 6 APIs cayeron
+  throw new Error(`Todas las APIs están caídas o saturadas. Último error: ${lastError}`)
 }
