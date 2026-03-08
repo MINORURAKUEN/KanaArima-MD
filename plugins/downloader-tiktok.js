@@ -9,27 +9,21 @@ const handler = async (m, { conn, text, args, usedPrefix, command }) => {
   const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
   const tradutor = _translate.plugins.descargas_tiktok;
 
-  // 1. Validación de texto/enlace
-  if (!text) throw `*${tradutor.texto1}*\n\n*Ejemplo:* _${usedPrefix + command} https://vt.tiktok.com/ZSSm2fhLX/_`;
+  if (!text) throw `*${tradutor.texto1}*\n_${usedPrefix + command} https://vt.tiktok.com/ZS12345/ _`;
   if (!/(?:https:?\/{2})?(?:w{3}|vm|vt|t)?\.?tiktok.com\/([^\s&]+)/gi.test(text)) throw `*${tradutor.texto2}*`;
 
   await m.reply(`*[⏳] ${tradutor.texto3}*`);
 
   try {
+    // INTENTO 1: Scraping instatiktok.com (Tu método original)
     let videoUrl = null;
-
-    // --- MÉTODO 1: SCRAPING (instatiktok.com) ---
-    try {
-      const links = await fetchDownloadLinks(args[0], 'tiktok');
-      if (links && links.length > 0) {
-        // Busca el enlace HD o el primero disponible
-        videoUrl = links.find(link => /hdplay|download/i.test(link)) || links[0];
-      }
-    } catch (err) {
-      console.log('Error en Scraping, pasando a APIs...');
+    const links = await fetchDownloadLinks(args[0], 'tiktok');
+    
+    if (links && links.length > 0) {
+      videoUrl = links.find(link => /hdplay|download/i.test(link)) || links[0];
     }
 
-    // --- MÉTODO 2: APIS ESTABLES (Fallback) ---
+    // INTENTO 2: Fallback con APIs estables (Si el scraping falla)
     if (!videoUrl) {
       const encoded = encodeURIComponent(args[0]);
       const apis = [
@@ -41,34 +35,31 @@ const handler = async (m, { conn, text, args, usedPrefix, command }) => {
       for (const api of apis) {
         try {
           const res = await fetch(api);
-          if (!res.ok) continue;
           const json = await res.json();
-          videoUrl = json.data?.url || json.result?.video || json.result?.url || (Array.isArray(json.data) ? json.data[0].url : null);
-          if (videoUrl && videoUrl.startsWith('http')) break;
+          videoUrl = json.data?.url || json.result?.url || (Array.isArray(json.data) ? json.data[0].url : null);
+          if (videoUrl) break;
         } catch { continue; }
       }
     }
 
-    if (!videoUrl) throw new Error('No se pudo obtener el video');
+    if (!videoUrl) throw new Error();
 
-    // 2. Envío del video
-    const cap = `✅ *TikTok descargado con éxito*\n\n${tradutor.texto8[0]} _${usedPrefix}tomp3_ ${tradutor.texto8[1]}`;
+    const cap = `✅ *TikTok descargado con éxito*\n${tradutor.texto8[0]} _${usedPrefix}tomp3_ ${tradutor.texto8[1]}`;
     await conn.sendMessage(m.chat, { video: { url: videoUrl }, caption: cap }, { quoted: m });
 
   } catch (e) {
     console.error(e);
-    m.reply(`*${tradutor.texto9}*`);
+    throw `*${tradutor.texto9}*`;
   }
 };
 
-// Aquí se definen los comandos a los que responderá el bot
-handler.help = ['tiktok', 'tt'];
+handler.help = ['tiktok'];
 handler.tags = ['downloader'];
-handler.command = /^(tt|tiktok|tiktokdl|ttdl)$/i;
+handler.command = /^(tiktok|ttdl|tiktokdl|tiktoknowm|tt|ttnowm|tiktokaudio)$/i;
 
 export default handler;
 
-// --- FUNCIONES DE SCRAPING ---
+// --- FUNCIONES DE APOYO ---
 
 async function fetchDownloadLinks(text, platform) {
   try {
@@ -94,3 +85,10 @@ async function fetchDownloadLinks(text, platform) {
     const links = [];
     $('a.btn[href^="http"]').each((_, el) => {
       const link = $(el).attr('href');
+      if (link && !links.includes(link)) links.push(link);
+    });
+    return links;
+  } catch {
+    return null;
+  }
+}
