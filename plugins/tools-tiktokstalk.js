@@ -1,104 +1,70 @@
 import axios from 'axios';
-import cheerio from 'cheerio';
-import fetch from 'node-fetch';
 import fs from 'fs';
 
-// Quitamos las llaves { } del segundo argumento para evitar el error de "undefined"
-let handler = async (m, _context) => {
-  // Intentamos obtener 'conn' de donde sea que esté (this o el contexto)
-  const conn = _context?.conn || m.conn || this;
-  
-  // Si no hay conexión o mensaje, salimos sin error
+let handler = async (m, { conn, text, usedPrefix, command }) => {
+  // Verificación de seguridad inicial
   if (!m || !conn) return;
 
-  // Variables de apoyo seguras
-  const text = _context?.text || m.text || '';
-  const args = _context?.args || text.trim().split` `.slice(1) || [];
-  const usedPrefix = _context?.usedPrefix || (text.match(/^[./!#]/) ? text[0] : '.');
-  const command = _context?.command || 'tiktok';
-
-  // Manejo de traducciones (con protección si no existe global.db)
-  const user = global.db?.data?.users?.[m.sender] || {};
-  const idioma = user.language || global.defaultLenguaje || 'es';
+  // Manejo de traducciones robusto
+  const datas = global;
+  const userDB = datas.db?.data?.users?.[m.sender] || {};
+  const idioma = userDB.language || global.defaultLenguaje || 'es';
   
   let tradutor;
   try {
     const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
-    tradutor = _translate.plugins.descargas_tiktok;
+    tradutor = _translate.plugins.downloader_tiktokstalk;
   } catch (e) {
+    // Fallback por si falla el archivo de idioma
     tradutor = { 
-      texto1: 'Ingrese un enlace de TikTok', 
-      texto2: 'Enlace no válido', 
-      texto3: 'Descargando...',
-      texto8: ['Usa', 'para audio'],
-      texto9: 'Error al descargar'
+      texto1: '⚠️ Ingrese el nombre de usuario.', 
+      texto2: ['Usuario:', 'Nickname:', 'Seguidores:', 'Siguiendo:', 'Likes:', 'Videos:', 'Bio:'], 
+      texto3: '❌ Error al buscar el perfil.' 
     };
   }
 
-  // Validación de link
-  if (!text) throw `*${tradutor.texto1}*\n\n*Ejemplo:* _${usedPrefix + command} https://vt.tiktok.com/ZS123/_`;
-  if (!/tiktok\.com/i.test(text)) throw `*${tradutor.texto2}*`;
-
-  await m.reply(`*[⏳] ${tradutor.texto3}*`);
+  if (!text) return conn.reply(m.chat, tradutor.texto1, m);
 
   try {
-    let videoUrl = null;
+    // API de Delirius (muy estable para stalk)
+    const response = await axios.get("https://delirius-apiofc.vercel.app/tools/tiktokstalk", {
+      params: { q: text }
+    });
 
-    // MÉTODO 1: SCRAPING (instatiktok.com)
-    try {
-      const links = await fetchDownloadLinks(text, 'tiktok');
-      if (links && links.length > 0) {
-        videoUrl = links.find(link => /hdplay|download/i.test(link)) || links[0];
-      }
-    } catch { }
+    const data = response.data;
+    if (data.status && data.result) {
+      const user = data.result.users;
+      const stats = data.result.stats;
 
-    // MÉTODO 2: APIS (Fallback)
-    if (!videoUrl) {
-      const encoded = encodeURIComponent(text);
-      const apis = [
-        `https://api.botcahx.eu.org/api/dowloader/tiktok?url=${encoded}&apikey=BrunoSobrino`,
-        `https://api.vreden.my.id/api/tiktok?url=${encoded}`,
-        `https://luminai.my.id/api/download/tiktok?url=${encoded}`
-      ];
+      // Construcción del mensaje
+      const body = `
+${tradutor.texto2[0]} ${user.username || '-'}
+${tradutor.texto2[1]} ${user.nickname || '-'}
+${tradutor.texto2[2]} ${stats.followerCount || '-'}
+${tradutor.texto2[3]} ${stats.followingCount || '-'}
+${tradutor.texto2[4]} ${stats.likeCount || '-'}
+${tradutor.texto2[5]} ${stats.videoCount || '-'}
+${tradutor.texto2[6]} ${user.signature || '-'}
+`.trim();
 
-      for (const api of apis) {
-        try {
-          const res = await fetch(api);
-          const json = await res.json();
-          videoUrl = json.data?.url || json.result?.video || json.result?.url || (Array.isArray(json.data) ? json.data[0].url : null);
-          if (videoUrl && videoUrl.startsWith('http')) break;
-        } catch { continue; }
-      }
+      const imageUrl = user.avatarLarger;
+      
+      // Enviamos la imagen directamente por URL (es más rápido que Buffer en Termux)
+      await conn.sendFile(m.chat, imageUrl, 'profile.jpg', body, m);
+    } else {
+      throw tradutor.texto3;
     }
-
-    if (!videoUrl) throw new Error();
-
-    const cap = `✅ *TikTok descargado*\n\n${tradutor.texto8[0]} _${usedPrefix}tomp3_ ${tradutor.texto8[1]}`;
-    await conn.sendMessage(m.chat, { video: { url: videoUrl }, caption: cap }, { quoted: m });
-
   } catch (e) {
-    m.reply(`*${tradutor.texto9}*`);
+    console.error(e);
+    throw tradutor.texto3;
   }
 };
 
-handler.help = ['tiktok', 'tt'];
-handler.tags = ['downloader'];
-handler.command = /^(tt|tiktok|tiktokdl|ttdl)$/i;
+handler.help = ['tiktokstalk'];
+handler.tags = ['tools'];
+handler.command = ['ttstalk', 'tiktokstalk'];
 
 export default handler;
-
-// Función de apoyo para scraping
-async function fetchDownloadLinks(url, platform) {
-  try {
-    const SITE_URL = 'https://instatiktok.com/';
-    const form = new URLSearchParams();
-    form.append('url', url);
-    form.append('platform', platform);
-    const res = await axios.post(`${SITE_URL}api`, form.toString(), {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'User-Agent': 'Mozilla/5.0' }
-    });
-    const html = res?.data?.html;
-    if (!html) return null;
     const $ = cheerio.load(html);
     const links = [];
     $('a.btn[href^="http"]').each((_, el) => { links.push($(el).attr('href')); });
