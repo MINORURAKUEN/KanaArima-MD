@@ -1,9 +1,7 @@
 import fs from "fs"
-// ❌ import axios from "axios" (¡Eliminado!)
 import uploadImage from "../src/libraries/uploadImage.js"
 
 const handler = async (m, { conn, usedPrefix, command }) => {
-  // Uso de encadenamiento opcional (?.) por si el usuario aún no está en la base de datos
   const idioma = global.db.data.users[m.sender]?.language || global.defaultLenguaje
   const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`))
   const tradutor = _translate.plugins.herramientas_hd
@@ -12,29 +10,27 @@ const handler = async (m, { conn, usedPrefix, command }) => {
     const q = m.quoted ? m.quoted : m
     const mime = (q.msg || q).mimetype || q.mediaType || ""
 
-    // 1. Verificamos que sea una imagen
     if (!mime) throw `${tradutor.texto1} ${usedPrefix + command}*`
     if (!/image\/(jpe?g|png)/.test(mime)) throw `${tradutor.texto2[0]} (${mime}) ${tradutor.texto2[1]}`
 
-    await m.reply(tradutor.texto3)
+    await m.reply(tradutor.texto3) // "Procesando..."
 
-    // 2. Procesamiento de la imagen
     const img = await q.download()
     const fileUrl = await uploadImage(img)
     
     if (!fileUrl) throw "Error al subir la imagen al servidor temporal."
 
-    const enhancedImage = await upscaleWithStellar(fileUrl)
+    // Usamos la nueva función con la API comunitaria
+    const enhancedImage = await upscaleWithFreeAPI(fileUrl)
 
-    // 3. Enviamos el resultado
     await conn.sendMessage(m.chat, { 
         image: enhancedImage, 
-        caption: "✨ Mejora HD completada" 
+        caption: "✨ Mejora HD completada con éxito" 
     }, { quoted: m })
 
   } catch (e) {
     console.error(e)
-    m.reply(`${tradutor.texto4} \n\n*Error:* ${e.message || e}`)
+    m.reply(`*[❗] ERROR:* ${e.message || e}`)
   }
 }
 
@@ -43,25 +39,41 @@ handler.tags = ["ai", "tools"]
 handler.command = ["remini", "hd", "enhance"]
 export default handler
 
-// ✅ Refactorizado para usar la API nativa Fetch y manejar URLs correctamente
-async function upscaleWithStellar(url) {
+// ✅ Función inteligente que usa las APIs de la comunidad de GataBot/Mystic
+async function upscaleWithFreeAPI(url) {
   try {
-    // encodeURIComponent evita que la URL se rompa si contiene caracteres especiales
-    const endpoint = `https://api.stellarwa.xyz/tools/upscale?url=${encodeURIComponent(url)}&key=BrunoSobrino`
+    // 🔗 API 1: Deliriuss (Muy usada en GataBot y Mystic)
+    // Si esta falla en el futuro, puedes cambiarla por: `https://api.siputzx.my.id/api/ai/remini?url=`
+    const endpoint = `https://deliriussapi-oficial.vercel.app/tools/remini?url=${encodeURIComponent(url)}`
     
-    const response = await fetch(endpoint, {
-      headers: { 'Accept': 'image/*' }
-    })
+    const response = await fetch(endpoint)
 
-    // Comprobamos si la API devolvió un error (ej. 404, 500)
     if (!response.ok) {
-        throw new Error(`La API de Stellar devolvió el estado: ${response.status}`)
+        throw new Error(`La API comunitaria devolvió el estado: ${response.status}`)
     }
 
-    // Convertimos la respuesta a Buffer
-    const arrayBuffer = await response.arrayBuffer()
-    return Buffer.from(arrayBuffer)
-  } catch (err) {
-    throw new Error(`Fallo al mejorar la imagen: ${err.message}`)
-  }
+    // 🧠 Lógica inteligente: Revisamos si la API devolvió un JSON o la imagen directamente
+    const contentType = response.headers.get("content-type")
+
+    if (contentType && contentType.includes("application/json")) {
+        // Si devuelve JSON (ej. { "data": "https://enlace-de-imagen.jpg" })
+        const json = await response.json()
+        const resultUrl = json.data || json.url || json.result // Soporta los formatos más comunes
+        
+        if (!resultUrl) throw new Error("La API no devolvió el enlace de la imagen.")
+        
+        // Descargamos la imagen ya mejorada
+        const imgResponse = await fetch(resultUrl)
+        const arrayBuffer = await imgResponse.arrayBuffer()
+        return Buffer.from(arrayBuffer)
+        
+    } else {
+        // Si la API devuelve la imagen directamente como Buffer
+        const arrayBuffer = await response.arrayBuffer()
+        return Buffer.from(arrayBuffer)
     }
+    
+  } catch (err) {
+    throw new Error(`Fallo en el servicio HD: ${err.message}`)
+  }
+}
