@@ -1,81 +1,116 @@
 import { File } from 'megajs';
-import { lookup } from 'mime-types';
+import WebTorrent from 'webtorrent';
+import axios from 'axios';
+import * as cheerio from 'cheerio';
 import fs from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
+// Configuración del cliente Torrent para Termux (Archivos Pesados)
+const client = new WebTorrent({ 
+    maxConns: 25, // No saturar la red del celular
+});
+
 const handler = async (m, { conn, args, usedPrefix, command }) => {
-    if (!args[0]) throw `*< DESCARGAS - MEGA />*\n\n*[ ℹ️ ] Ingrese un enlace de Mega.*\n\n*[ 💡 ] Ejemplo:* ${usedPrefix + command} https://mega.nz/file/xxxx#yyyy`;
+    const url = args[0];
+    if (!url) throw `*< MULTI-DESCARGADOR PRO />*\n\n*Uso:* ${usedPrefix + command} [enlace]\n\n*✅ Soportados:* \n- Mega\n- MediaFire\n- Torrents (Magnet)\n\n*⚖️ Límite:* 2GB (Asegúrate de tener espacio en tu cel)`;
+
+    const isTorrent = url.startsWith('magnet:');
+    const isMega = /mega\.nz/.test(url);
+    const isMediaFire = /mediafire\.com/.test(url);
+    const MAX_SIZE = 2 * 1024 * 1024 * 1024; // 2GB en Bytes
 
     try {
-        // 1. Cargar metadatos del archivo
-        console.log(`\n[MEGA] 🚀 Procesando enlace...`);
-        const file = File.fromURL(args[0]);
-        await file.loadAttributes();
+        // --- 1. LÓGICA DE MEDIAFIRE ---
+        if (isMediaFire) {
+            await m.reply('*📥 Procesando MediaFire...*');
+            const { data } = await axios.get(url);
+            const $ = cheerio.load(data);
+            const dlUrl = $('#downloadButton').attr('href');
+            const fileName = $('#downloadButton').text().replace(/\s+/g, ' ').trim().split('\n')[0] || 'archivo_mediafire';
+            
+            if (!dlUrl) throw new Error('No se pudo encontrar el botón de descarga.');
 
-        const name = file.name;
-        const size = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
-        const mime = lookup(name) || 'application/octet-stream';
+            const tempPath = join(tmpdir(), `${Date.now()}_${fileName}`);
+            const response = await axios({ method: 'get', url: dlUrl, responseType: 'stream' });
+            
+            const writer = fs.createWriteStream(tempPath);
+            response.data.pipe(writer);
 
-        // Validación de seguridad (ejemplo: 300MB)
-        if (file.size > 300 * 1024 * 1024) {
-            return m.reply(`⚠️ *El archivo es demasiado grande (${size}).* El límite es de 300MB.`);
+            writer.on('finish', async () => {
+                await conn.sendFile(m.chat, tempPath, fileName, `*✅ MediaFire:* ${fileName}`, m, null, { asDocument: true });
+                if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+            });
         }
 
-        await m.reply(`*📥 Descargando de Mega...*\n\n*📝 Nombre:* ${name}\n*📁 Peso:* ${size}\n\n_El progreso se monitorea en la terminal._`);
+        // --- 2. LÓGICA DE MEGA ---
+        else if (isMega) {
+            await m.reply('*📥 Procesando Mega...*');
+            const file = File.fromURL(url);
+            await file.loadAttributes();
 
-        // 2. Configurar ruta temporal y Stream
-        const tempPath = join(tmpdir(), `${Date.now()}_${name.replace(/\s+/g, '_')}`);
-        const writer = fs.createWriteStream(tempPath);
-        const stream = file.download();
+            if (file.size > MAX_SIZE) return m.reply(`⚠️ El archivo es demasiado grande para WhatsApp (${(file.size / 1024 / 1024 / 1024).toFixed(2)} GB).`);
 
-        console.log(`[MEGA] 📦 Descargando: ${name}`);
-
-        let downloadedLength = 0;
-        const totalLength = file.size;
-
-        // 3. Monitoreo en Terminal
-        stream.on('data', (chunk) => {
-            downloadedLength += chunk.length;
-            const progress = ((downloadedLength / totalLength) * 100).toFixed(2);
+            const tempPath = join(tmpdir(), `${Date.now()}_${file.name}`);
+            const stream = file.download();
+            const writer = fs.createWriteStream(tempPath);
             
-            process.stdout.clearLine(0);
-            process.stdout.cursorTo(0);
-            process.stdout.write(`[MEGA] 🔽 PROGRESO: ${progress}% (${(downloadedLength / 1024 / 1024).toFixed(2)} MB / ${size})`);
-        });
+            stream.pipe(writer);
 
-        stream.pipe(writer);
-
-        // 4. Finalización y envío
-        writer.on('finish', async () => {
-            console.log(`\n[MEGA] ✅ Descarga completa. Subiendo a WhatsApp...`);
-            
-            try {
-                await conn.sendFile(m.chat, tempPath, name, '', m, null, { 
-                    mimetype: mime, 
-                    asDocument: true 
-                });
-                console.log(`[MEGA] ✨ Enviado con éxito.\n`);
-            } catch (e) {
-                console.error(`[MEGA] ❌ Error al enviar:`, e.message);
-                m.reply('❌ Error al subir el archivo a WhatsApp.');
-            } finally {
-                // Limpieza de disco
+            writer.on('finish', async () => {
+                await conn.sendFile(m.chat, tempPath, file.name, `*✅ Mega:* ${file.name}`, m, null, { asDocument: true });
                 if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-            }
-        });
+            });
+        }
 
-        writer.on('error', (err) => {
-            console.error('[MEGA] ❌ Error de escritura:', err);
-            if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-            m.reply('❌ Error crítico al procesar el archivo.');
-        });
+        // --- 3. LÓGICA DE TORRENT ---
+        else if (isTorrent) {
+            await m.reply('*⏳ Conectando a la red Torrent...*\n_Buscando semillas (seeds) para iniciar descarga de hasta 2GB..._');
+
+            client.add(url, { path: tmpdir() }, (torrent) => {
+                // Selecciona el archivo más grande del torrent
+                const file = torrent.files.reduce((prev, curr) => (prev.length > curr.length ? prev : curr));
+
+                if (file.length > MAX_SIZE) {
+                    torrent.destroy();
+                    return m.reply('❌ El archivo torrent supera el límite de 2GB.');
+                }
+
+                console.log(`\n[TORRENT] Descargando: ${file.name}`);
+
+                torrent.on('download', () => {
+                    const progress = (torrent.progress * 100).toFixed(1);
+                    const speed = (torrent.downloadSpeed / (1024 * 1024)).toFixed(2);
+                    process.stdout.write(`\r[TORRENT] 🔽 ${progress}% | 🚀 ${speed} MB/s | Seeds: ${torrent.numPeers}`);
+                });
+
+                torrent.on('done', async () => {
+                    const filePath = join(tmpdir(), file.path);
+                    console.log(`\n[TORRENT] ✅ Completo. Enviando a WhatsApp...`);
+
+                    try {
+                        await conn.sendFile(m.chat, filePath, file.name, `*✅ Torrent:* ${file.name}\n*⚖️:* ${(file.length / 1024 / 1024).toFixed(2)} MB`, m, null, { 
+                            asDocument: true 
+                        });
+                    } catch (err) {
+                        m.reply('❌ Error al enviar el archivo pesado desde Termux.');
+                    } finally {
+                        torrent.destroy();
+                        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+                    }
+                });
+            });
+        }
+
+        else {
+            m.reply('❌ El enlace no es válido para Mega, MediaFire o Torrent.');
+        }
 
     } catch (error) {
-        console.error('[MEGA] ❌ Error:', error.message);
-        await m.reply(`❌ Enlace inválido o error de conexión. Asegúrate de incluir la clave de descifrado.`);
+        console.error(error);
+        m.reply(`❌ *Error:* ${error.message}`);
     }
 };
 
-handler.command = /^(mega|dlmega|mg)$/i;
+handler.command = /^(dl|mega|mf|torrent|trt)$/i;
 export default handler;
