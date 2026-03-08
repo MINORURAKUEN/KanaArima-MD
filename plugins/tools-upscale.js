@@ -1,4 +1,45 @@
-// ✅ Función con Evasión Anti-Bots (Bypass Cloudflare) y APIs actualizadas
+import fs from "fs"
+import uploadImage from "../src/libraries/uploadImage.js"
+
+const handler = async (m, { conn, usedPrefix, command }) => {
+  const idioma = global.db.data.users[m.sender]?.language || global.defaultLenguaje
+  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`))
+  const tradutor = _translate.plugins.herramientas_hd
+
+  try {
+    const q = m.quoted ? m.quoted : m
+    const mime = (q.msg || q).mimetype || q.mediaType || ""
+
+    if (!mime) throw `${tradutor.texto1} ${usedPrefix + command}*`
+    if (!/image\/(jpe?g|png)/.test(mime)) throw `${tradutor.texto2[0]} (${mime}) ${tradutor.texto2[1]}`
+
+    await m.reply(tradutor.texto3) // "Procesando..."
+
+    const img = await q.download()
+    const fileUrl = await uploadImage(img)
+    
+    if (!fileUrl) throw "Error al subir la imagen al servidor temporal."
+
+    // Llamamos a nuestra función blindada con bypass Anti-Bots
+    const enhancedImage = await upscaleWithFreeAPI(fileUrl)
+
+    await conn.sendMessage(m.chat, { 
+        image: enhancedImage, 
+        caption: "✨ Mejora HD completada con éxito" 
+    }, { quoted: m })
+
+  } catch (e) {
+    console.error(e)
+    m.reply(`*[❗] ERROR:* ${e.message || e}`)
+  }
+}
+
+handler.help = ["remini", "hd", "enhance"]
+handler.tags = ["ai", "tools"]
+handler.command = ["remini", "hd", "enhance"]
+export default handler
+
+// ✅ Función unificada con Evasión Anti-Bots (Bypass Cloudflare) y APIs actualizadas
 async function upscaleWithFreeAPI(url) {
   const encodedUrl = encodeURIComponent(url)
   
@@ -46,19 +87,5 @@ async function upscaleWithFreeAPI(url) {
           }
           
           const imgResponse = await fetch(resultUrl, { headers })
-          const arrayBuffer = await imgResponse.arrayBuffer()
-          return Buffer.from(arrayBuffer)
-          
-      } else {
-          const arrayBuffer = await response.arrayBuffer()
-          return Buffer.from(arrayBuffer)
-      }
-      
-    } catch (err) {
-      errores.push(`${apiName}: ${err.name === 'AbortError' ? 'Timeout' : 'Caída'}`)
-      continue 
-    }
-  }
-  
-  throw new Error(`\nTodas las APIs fallaron.\nReporte de daños:\n- ${errores.join('\n- ')}\n\n*Nota:* Si todas fallan constantemente, las APIs podrían estar bloqueando enlaces de 'catbox.moe'.`)
-}
+          const arrayBuffer
+        
