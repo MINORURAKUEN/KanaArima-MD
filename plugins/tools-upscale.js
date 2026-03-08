@@ -1,68 +1,87 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import fs from "fs";
-
-// 🔑 Sistema de doble llave para evitar límites de cuota
-const API_KEYS = [
-  "AIzaSyDnNM93HE8_aBaby6dsvmLQkAHnL-9WOdE",
-  "AIzaSyCY4MN1NqqrdyrhUVewbWCceXv3NvSbhmA"
-];
-
-// Función para obtener una llave aleatoria o rotativa
-const getGenAI = () => {
-  const key = API_KEYS[Math.floor(Math.random() * API_KEYS.length)];
-  return new GoogleGenerativeAI(key);
-};
+import fs from "fs"
+import fetch from "node-fetch"
+import uploadImage from "../src/libraries/uploadImage.js"
 
 const handler = async (m, { conn, usedPrefix, command }) => {
-  const idioma = global.db.data.users[m.sender]?.language || global.defaultLenguaje;
-  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
-  const tradutor = _translate.plugins?.herramientas_hd || { texto3: "Procesando..." };
+  const idioma = global.db.data.users[m.sender]?.language || global.defaultLenguaje
+  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`))
+  const tradutor = _translate.plugins.herramientas_hd
 
   try {
-    const q = m.quoted ? m.quoted : m;
-    const mime = (q.msg || q).mimetype || q.mediaType || "";
+    const q = m.quoted ? m.quoted : m
+    const mime = (q.msg || q).mimetype || q.mediaType || ""
 
-    if (!/image\/(jpe?g|png)/.test(mime)) throw `⚠️ Responde a una imagen con *${usedPrefix + command}*`;
+    if (!/image\/(jpe?g|png)/.test(mime)) throw `⚠️ ${tradutor.texto1} ${usedPrefix + command}*`
 
-    await m.reply("🪄 *Mejorando imagen con Google Gemini 1.5 (Dual-Key Mode)...*");
+    await m.reply(tradutor.texto3) // "Procesando..."
 
-    // 1. Descarga del buffer
-    const imgBuffer = await q.download();
+    // 1. Descargamos y subimos la imagen para obtener una URL (necesario para estas APIs)
+    const img = await q.download()
+    const url = await uploadImage(img)
     
-    // 2. Inicializamos Gemini con rotación de llaves
-    const genAI = getGenAI();
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    if (!url) throw "❌ Error al subir la imagen al servidor temporal."
 
-    // 3. Prompt optimizado para reconstrucción HD
-    const prompt = "Act as a high-end image restorer. Describe every single detail, texture, color, and object in this image with extreme precision for a 4K reproduction. Focus on sharpening edges and clarity.";
+    // 2. Intentamos con el sistema de relevos de GitHub MD
+    const enhancedBuffer = await upscaleGithubMD(url)
 
-    const result = await model.generateContent([
-      prompt,
-      { inlineData: { data: imgBuffer.toString("base64"), mimeType: mime } }
-    ]);
+    if (!enhancedBuffer) throw "❌ Todas las APIs de escalado están caídas en este momento."
 
-    const response = await result.response;
-    const description = response.text();
-
-    // 4. Generación de la imagen mejorada (2048px de resolución)
-    // Usamos un motor de renderizado de alta fidelidad sin marcas de agua
-    const seed = Math.floor(Math.random() * 999999);
-    const hdUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(description)}?width=2048&height=2048&seed=${seed}&nologo=true&enhance=true`;
-
-    // 5. Envío del resultado
+    // 3. Enviamos el resultado final
     await conn.sendMessage(m.chat, { 
-      image: { url: hdUrl }, 
-      caption: "✨ *CALIDAD MEJORADA*\n\n✅ Reconstrucción completa finalizada.\n🚀 *Motor:* Gemini 1.5 Flash (Dual Key)" 
-    }, { quoted: m });
+      image: enhancedBuffer, 
+      caption: "✨ *Imagen mejorada con éxito*\n🚀 *Motor:* GitHub MD Upscaler" 
+    }, { quoted: m })
 
   } catch (e) {
-    console.error("Error en HD Gemini:", e);
-    m.reply(`*[❗] Error:* No se pudo procesar la imagen. Inténtalo de nuevo en unos segundos.`);
+    console.error(e)
+    m.reply(`*[❗] ERROR:* ${e.message || e}`)
   }
-};
+}
 
-handler.help = ["hd", "remini"];
-handler.tags = ["ai"];
-handler.command = /^(hd|remini|enhance)$/i;
+/**
+ * Sistema de APIs utilizado por los principales repositorios de GitHub
+ */
+async function upscaleGithubMD(url) {
+  const encoded = encodeURIComponent(url)
+  
+  // Lista de APIs "Premium" gratuitas usadas en bots MD
+  const apis = [
+    `https://api.vreden.my.id/api/remini?url=${encoded}`,
+    `https://api.stellarwa.xyz/tools/upscale?url=${encoded}&key=BrunoSobrino`,
+    `https://api.botcahx.eu.org/api/tools/remini?url=${encoded}&apikey=BrunoSobrino`,
+    `https://api.ryzendesu.vip/api/ai/remini?url=${encoded}`
+  ]
 
-export default handler;
+  for (const api of apis) {
+    try {
+      const res = await fetch(api)
+      if (!res.ok) continue
+
+      const contentType = res.headers.get('content-type')
+      
+      // Si la API devuelve la imagen directamente (Buffer)
+      if (contentType && contentType.includes('image')) {
+        return Buffer.from(await res.arrayBuffer())
+      } 
+      
+      // Si la API devuelve un JSON con el link de la imagen
+      const json = await res.json()
+      const finalUrl = json.result?.url || json.result || json.data?.url || json.url
+      
+      if (finalUrl && finalUrl.startsWith('http')) {
+        const imgRes = await fetch(finalUrl)
+        return Buffer.from(await imgRes.arrayBuffer())
+      }
+    } catch (err) {
+      console.log(`⚠️ Falló una API, intentando la siguiente...`)
+      continue
+    }
+  }
+  return null
+}
+
+handler.help = ["remini", "hd", "enhance"]
+handler.tags = ["ai", "tools"]
+handler.command = /^(remini|hd|enhance|upscale)$/i
+
+export default handler
