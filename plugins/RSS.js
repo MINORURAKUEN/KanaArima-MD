@@ -3,74 +3,93 @@ import fs from 'fs';
 
 const parser = new Parser();
 const KUDASAI_RSS = 'https://somoskudasai.com/feed/';
-const CONFIG_FILE = './rss_config.json';
+const CONFIG_PATH = './rss_config.json';
 
-// Inicializar archivo de configuración si no existe
-if (!fs.existsSync(CONFIG_FILE)) {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ rss_enabled: true, last_link: "" }));
+// --- FUNCIONES DE PERSISTENCIA ---
+function readConfig() {
+    if (!fs.existsSync(CONFIG_PATH)) {
+        const initialConfig = { rss_enabled: false, last_link: "", target_chat: "" };
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(initialConfig, null, 2));
+        return initialConfig;
+    }
+    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
 }
 
-const handler = async (m, { conn, command, text }) => {
-    let config = JSON.parse(fs.readFileSync(CONFIG_FILE));
+function saveConfig(config) {
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+}
 
-    if (command === 'rss') {
-        if (!text) return m.reply('Uso: *.rss on* o *.rss off*');
-        
-        if (text === 'on') {
-            config.rss_enabled = true;
-            fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
-            return m.reply('✅ Notificaciones de Kudasai: *ACTIVADAS*');
-        } else if (text === 'off') {
-            config.rss_enabled = false;
-            fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
-            return m.reply('❌ Notificaciones de Kudasai: *DESACTIVADAS*');
-        }
-    }
+// --- HANDLER PRINCIPAL ---
+let handler = async (m, { conn, command, text, isOwner, isAdmin }) => {
+    let config = readConfig();
 
-    if (command === 'feeds') {
-        m.reply('⌛ Cargando noticias de Kudasai...');
-        try {
-            const feed = await parser.parseURL(KUDASAI_RSS);
-            let txt = "*⛩️ ÚLTIMOS FEEDS DE KUDASAI ⛩️*\n\n";
-            feed.items.slice(0, 5).forEach((item, i) => {
-                txt += `${i + 1}. *${item.title}*\n🔗 ${item.link}\n\n`;
-            });
-            await conn.sendMessage(m.chat, { text: txt }, { quoted: m });
-        } catch (e) {
-            m.reply('❌ Error al conectar con el RSS.');
-        }
+    switch (command) {
+        case 'rss':
+            if (!isOwner && !isAdmin) return m.reply('❌ Este comando solo lo pueden usar Admins.');
+            if (!text) return m.reply('Uso correcto:\n*.rss on* (Activar)\n*.rss off* (Desactivar)');
+
+            if (text === 'on') {
+                config.rss_enabled = true;
+                config.target_chat = m.chat; // Se activará en el chat donde pongas el comando
+                saveConfig(config);
+                m.reply('✅ *Servicio de noticias Kudasai Activado*.\nLas noticias se enviarán automáticamente a este chat.');
+            } else if (text === 'off') {
+                config.rss_enabled = false;
+                saveConfig(config);
+                m.reply('❌ *Servicio de noticias Kudasai Desactivado*.');
+            }
+            break;
+
+        case 'feeds':
+            await m.reply('⌛ _Consultando últimas noticias de Kudasai..._');
+            try {
+                const feed = await parser.parseURL(KUDASAI_RSS);
+                let txt = "⛩️ *ÚLTIMOS FEEDS DE KUDASAI* ⛩️\n\n";
+                
+                feed.items.slice(0, 5).forEach((item, i) => {
+                    txt += `*${i + 1}.* ${item.title}\n🔗 ${item.link}\n\n`;
+                });
+                
+                await conn.sendMessage(m.chat, { text: txt }, { quoted: m });
+            } catch (e) {
+                console.error(e);
+                m.reply('❌ Error al conectar con el servidor de Kudasai.');
+            }
+            break;
     }
 };
 
-// Configuración del plugin para el bot
 handler.command = ['rss', 'feeds'];
-handler.tags = ['news'];
+handler.tags = ['news', 'tools'];
 handler.help = ['rss <on/off>', 'feeds'];
 
 export default handler;
 
-/**
- * Lógica de auto-check (puedes meterla en main.js o dejarla aquí 
- * si tu bot carga plugins persistentes)
- */
+// --- LOOP AUTOMÁTICO (Cada 10 minutos) ---
+// Nota: 'global.conn' debe estar disponible en tu bot para enviar mensajes automáticos
 setInterval(async () => {
     try {
-        let config = JSON.parse(fs.readFileSync(CONFIG_FILE));
-        if (!config.rss_enabled) return;
+        const config = readConfig();
+        if (!config.rss_enabled || !config.target_chat) return;
 
         const feed = await parser.parseURL(KUDASAI_RSS);
         const latest = feed.items[0];
 
-        if (latest.link !== config.last_link) {
+        if (latest && latest.link !== config.last_link) {
             config.last_link = latest.link;
-            fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
+            saveConfig(config);
 
-            const msg = `*📢 NOTICIA NUEVA (KUDASAI)*\n\n*${latest.title}*\n\n${latest.link}`;
-            
-            // Reemplaza con el ID de tu grupo o chat principal
-            // global.conn.sendMessage('tu_id_de_grupo@g.us', { text: msg });
+            const msg = `⛩️ *NUEVA NOTICIA DE KUDASAI* ⛩️\n\n` +
+                        `📌 *Título:* ${latest.title}\n` +
+                        `🔗 *Link:* ${latest.link}\n\n` +
+                        `_Actualización automática_`;
+
+            // Usamos global.conn que es el estándar en estos bots
+            if (global.conn) {
+                await global.conn.sendMessage(config.target_chat, { text: msg });
+            }
         }
     } catch (e) {
-        // Silencioso para no llenar la consola de Termux
+        // Error silencioso para no ensuciar la consola de Termux
     }
-}, 600000); 
+}, 600000); // 10 minutos
