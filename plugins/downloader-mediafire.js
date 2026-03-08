@@ -2,82 +2,95 @@ import axios from 'axios';
 import cheerio from 'cheerio';
 import { lookup } from 'mime-types';
 import fs from 'fs';
-import { performance } from 'perf_hooks';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
-const handler = async (m, { conn, args, usedPrefix, command }) => {
-  // Tu firma personalizada
-  const firma = '᭄🅜֟፝ıηͨσ‍ͥяͩυ🧸⃝꙰ཻུ⸙͎';
-
-  if (!args[0]) throw `_*< DESCARGAS - MEDIAFIRE />*_\n\n*[ ℹ️ ] Ingrese un enlace de MediaFire.*\n\n*[ 💡 ] Ejemplo:* ${usedPrefix + command} https://www.mediafire.com/file/ejemplo\n\n${firma}`;
+const handler = async (m, { conn, args }) => {
+  if (!args[0]) return m.reply('*[ ℹ️ ] Ingrese un enlace de MediaFire.*');
 
   try {
-    const startTime = performance.now();
-    const { name, link, sizeH } = await mediafireDl(args[0]);
+    // 1. Obtener metadatos del enlace
+    const res = await mediafireDl(args[0]);
+    const { name, size, mime, link } = res;
 
-    const { key } = await m.reply(`🚀 *Descargando archivo pesado...*\n📄 *Archivo:* ${name}\n⚖️ *Tamaño:* ${sizeH}\n\n_Procesando datos para envío íntegro..._\n\n${firma}`);
+    await m.reply(`*📥 Preparando descarga...*\n\n*Nombre:* ${name}\n*Tamaño:* ${size}\n\n_El proceso se está monitoreando en la terminal._`);
 
-    const t1 = performance.now();
-    const response = await axios.get(link, { 
-        responseType: 'arraybuffer',
-        timeout: 0, 
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity,
-        headers: { 
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Connection': 'keep-alive'
-        }
+    // 2. Definir ruta temporal para el archivo
+    const tempPath = join(tmpdir(), `${Date.now()}_${name}`);
+    const writer = fs.createWriteStream(tempPath);
+
+    console.log(`\n[MEDIAFIRE] Iniciando descarga: ${name}`);
+    console.log(`[MEDIAFIRE] URL: ${link}`);
+
+    // 3. Descarga con Axios y Stream para el progreso en Terminal
+    const response = await axios({
+      method: 'get',
+      url: link,
+      responseType: 'stream',
+      headers: { 'User-Agent': 'Mozilla/5.0' }
     });
-    const t2 = performance.now();
 
-    const buffer = Buffer.from(response.data);
-    const mime = lookup(name) || 'application/octet-stream';
-    const downloadSpeed = ((buffer.length / (1024 * 1024)) / ((t2 - t1) / 1000)).toFixed(2);
+    const totalLength = response.headers['content-length'];
+    let downloadedLength = 0;
 
-    // Envío del documento con la firma en el pie de página
-    await conn.sendMessage(m.chat, { 
-        document: buffer, 
-        fileName: name, 
-        mimetype: mime,
-        caption: `✅ *Archivo verificado e íntegro.*\n\n${firma}`
-    }, { quoted: m });
+    response.data.on('data', (chunk) => {
+      downloadedLength += chunk.length;
+      const progress = ((downloadedLength / totalLength) * 100).toFixed(2);
+      
+      // Limpia la línea y muestra el progreso en la misma posición de la terminal
+      process.stdout.clearLine(0);
+      process.stdout.cursorTo(0);
+      process.stdout.write(`[MEDIAFIRE] PROGRESO: ${progress}% (${(downloadedLength / 1024 / 1024).toFixed(2)} MB / ${(totalLength / 1024 / 1024).toFixed(2)} MB)`);
+    });
 
-    const totalTime = (performance.now() - startTime) / 1000;
+    response.data.pipe(writer);
 
-    const finalCaption = `
-✅ *¡DESCARGA COMPLETADA!*
-📄 *Archivo:* ${name}
-⏱️ *Tiempo total:* ${totalTime.toFixed(2)}s
-⚡ *Vel. Descarga:* ${downloadSpeed} MB/s
-\n${firma}`.trim();
+    // 4. Cuando termine de guardarse en disco, subir a WhatsApp
+    writer.on('finish', async () => {
+      console.log(`\n[MEDIAFIRE] Descarga completada. Iniciando subida a WhatsApp...`);
+      
+      await conn.sendFile(m.chat, tempPath, name, '', m, null, { 
+        mimetype: mime, 
+        asDocument: true 
+      });
 
-    await conn.sendMessage(m.chat, { text: finalCaption, edit: key });
+      console.log(`[MEDIAFIRE] Archivo enviado con éxito: ${name}\n`);
+      
+      // Borrar archivo temporal para no llenar el disco
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    });
+
+    writer.on('error', (err) => {
+      console.error('[MEDIAFIRE] Error en escritura:', err);
+      m.reply('❌ Error al guardar el archivo temporal.');
+    });
 
   } catch (error) {
-    console.error('Error:', error.message);
-    await m.reply(`❌ *Error:* No se pudo procesar el comando. Verifica el enlace o el estado del servidor.\n\n${firma}`);
+    console.error('[MEDIAFIRE] Error fatal:', error.message);
+    await m.reply(`❌ Error: ${error.message}`);
   }
 };
 
-// CORRECCIÓN DE COMANDO: Ahora acepta .mediafire y .mf
-handler.command = /^(mediafire|mediafiredl|dlmediafire|mf)$/i;
+handler.command = /^(mediafire|mediafiredl|dlmediafire)$/i;
 export default handler;
 
+// Función Scraper (Mantenemos la lógica robusta anterior)
 async function mediafireDl(url) {
-  const res = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }});
-  const $ = cheerio.load(res.data);
-  const downloadButton = $('#downloadButton');
-  let link = downloadButton.attr('href');
+  const response = await axios.get(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0' }
+  });
+  const $ = cheerio.load(response.data);
   
-  if (!link || link.includes('javascript:void(0)')) {
-    link = res.data.match(/href="(https:\/\/download\d+\.mediafire\.com[^"]+)"/)?.[1];
-  }
-  
-  let name = $('.promoDownloadName').first().attr('title') || $('.filename').first().text().trim();
-  name = name.replace(/\s+/g, ' ').split('\n')[0].trim();
-  
-  const urlExt = link.split('.').pop().split('?')[0];
-  if (!name.toLowerCase().endsWith(urlExt.toLowerCase())) name += `.${urlExt}`;
-  
-  const sizeH = downloadButton.text().replace(/Download|[\(\)]|\s+/g, ' ').trim();
-  return { name, link, sizeH };
+  let link = $('#downloadButton').attr('href') || 
+             $('a#downloadButton').attr('href') ||
+             response.data.match(/https?:\/\/download\d+\.mediafire\.com\/[^\s"']+/)?.[0];
+
+  if (!link) throw new Error('No se pudo extraer el enlace directo.');
+
+  const name = $('div.dl-btn-label').attr('title') || 'archivo_descargado';
+  const size = $('#downloadButton').text().replace(/Download|[\(\)\n\t]/g, '').trim() || 'N/A';
+  const ext = name.split('.').pop()?.toLowerCase();
+  const mime = lookup(ext) || 'application/octet-stream';
+
+  return { name, size, mime, link };
 }
