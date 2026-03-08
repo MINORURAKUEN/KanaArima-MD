@@ -13,7 +13,7 @@ let handler = async (m, { conn, args, text, usedPrefix, command }) => {
   let type = command === 'play' ? 'mp3' : 'mp4';
   let additionalText = type === 'mp3' ? 'audio' : 'vídeo';
 
-  // 1. Buscar el video
+  // 1. Buscar el video en YouTube
   const result = await search(args.join(' '));
   if (!result) throw 'No se encontraron resultados.';
 
@@ -23,35 +23,31 @@ let handler = async (m, { conn, args, text, usedPrefix, command }) => {
 
   const youtubeUrl = result.url;
 
-  // 2. Lista de APIs para Rotación
-  // Algunas APIs usan parámetros distintos, aquí adaptamos la lógica
+  // 2. Rotación de APIs especializadas en YouTube (Bypass Cloudflare)
   const apiEndpoints = [
-    { name: 'Interno', type: 'internal' },
-    { name: 'Ruby-Core', url: `https://ruby-core.vercel.app/api/download/youtube/${type}?url=${encodeURIComponent(youtubeUrl)}` },
-    { name: 'Loco-API', url: `https://api.locogamer.com/api/yt${type}?url=${encodeURIComponent(youtubeUrl)}` },
-    { name: 'Alternative-DL', url: `https://api.bot-whatsapp.tech/download/yt${type}?url=${encodeURIComponent(youtubeUrl)}` }
+    { name: 'API 1 (Direct)', url: `https://api.zenon.io/download/youtube?url=${encodeURIComponent(youtubeUrl)}&format=${type}` },
+    { name: 'API 2 (Ruby)', url: `https://ruby-core.vercel.app/api/download/youtube/${type}?url=${encodeURIComponent(youtubeUrl)}` },
+    { name: 'API 3 (Aggregator)', url: `https://api.vyt-loader.com/v2/convert?url=${encodeURIComponent(youtubeUrl)}&type=${type}` }
   ];
+
+  
 
   let success = false;
 
   for (const api of apiEndpoints) {
     try {
-      console.log(`--- Intentando descargar con: ${api.name} ---`);
-      let downloadUrl = '';
-
-      if (api.type === 'internal') {
-        // Intento con tu tools.downloader original
-        const dl = await tools.downloader[type === 'mp3' ? 'ytmp3' : 'ytmp4'](youtubeUrl);
-        downloadUrl = dl.download;
-      } else {
-        // Intento con APIs externas
-        const res = await fetch(api.url, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-        });
-        const data = await res.json();
-        // Ajustamos según el formato común de respuesta { status: true, download: { url: '...' } }
-        downloadUrl = data?.download?.url || data?.result || data?.url;
-      }
+      console.log(`--- Intentando con fuente: ${api.name} ---`);
+      
+      const res = await fetch(api.url, {
+        headers: { 
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      });
+      
+      const data = await res.json();
+      
+      // Mapeo flexible de respuestas según la API
+      const downloadUrl = data?.download?.url || data?.result?.url || data?.url || data?.link;
 
       if (downloadUrl) {
         await conn.sendMessage(m.chat, { 
@@ -61,16 +57,16 @@ let handler = async (m, { conn, args, text, usedPrefix, command }) => {
         }, { quoted: m });
         
         success = true;
-        break; // Detener el ciclo si la descarga fue exitosa
+        break; 
       }
     } catch (err) {
-      console.error(`❌ Error en ${api.name}:`, err.message);
-      continue; // Probar la siguiente API
+      console.error(`❌ Error en fuente ${api.name}:`, err.message);
+      continue; 
     }
   }
 
   if (!success) {
-    conn.reply(m.chat, "⚠️ Todas las fuentes de descarga fallaron. Intenta de nuevo más tarde o con otro video.", m);
+    conn.reply(m.chat, "⚠️ No pudimos procesar la descarga de YouTube. Intenta con otro término de búsqueda.", m);
   }
 };
 
