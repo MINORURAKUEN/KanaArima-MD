@@ -1,46 +1,67 @@
 import fs from "fs"
-import { Upscaler } from 'upscaler'
-import defaultModel from '@upscalerjs/default-model'
-import { Canvas, Image, loadImage } from 'canvas' // Necesitas instalar 'canvas'
-
-// Configuramos UpscalerJS para que use el motor de CPU (ideal para Termux/VPS)
-const upscaler = new Upscaler({
-  model: defaultModel
-})
+// ❌ import axios from "axios" (¡Eliminado!)
+import uploadImage from "../src/libraries/uploadImage.js"
 
 const handler = async (m, { conn, usedPrefix, command }) => {
-  try {
-    const q = m.quoted ? m.quoted : m
-    const mime = (q.msg || q).mimetype || q.mediaType || ""
+  // Uso de encadenamiento opcional (?.) por si el usuario aún no está en la base de datos
+  const idioma = global.db.data.users[m.sender]?.language || global.defaultLenguaje
+  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`))
+  const tradutor = _translate.plugins.herramientas_hd
 
-    if (!/image\/(jpe?g|png)/.test(mime)) throw `⚠️ Responde a una imagen para procesarla localmente.`
+  try {
+    const q = m.quoted ? m.quoted : m
+    const mime = (q.msg || q).mimetype || q.mediaType || ""
 
-    await m.reply("🛡️ *Procesando imagen con motor local (UpscalerJS)...*\n_Esto puede tardar unos segundos dependiendo de tu servidor._")
+    // 1. Verificamos que sea una imagen
+    if (!mime) throw `${tradutor.texto1} ${usedPrefix + command}*`
+    if (!/image\/(jpe?g|png)/.test(mime)) throw `${tradutor.texto2[0]} (${mime}) ${tradutor.texto2[1]}`
 
-    // 1. Descargamos la imagen
-    const imgBuffer = await q.download()
-    
-    // 2. Procesamiento Local con Redes Neuronales
-    // UpscalerJS toma el buffer y reconstruye la imagen
-    const enhancedImageBase64 = await upscaler.upscale(imgBuffer)
+    await m.reply(tradutor.texto3)
 
-    // 3. Convertimos el resultado (Base64) de vuelta a Buffer
-    const finalBuffer = Buffer.from(enhancedImageBase64.replace(/^data:image\/\w+;base64,/, ""), 'base64')
+    // 2. Procesamiento de la imagen
+    const img = await q.download()
+    const fileUrl = await uploadImage(img)
+    
+    if (!fileUrl) throw "Error al subir la imagen al servidor temporal."
 
-    // 4. Enviamos el resultado
-    await conn.sendMessage(m.chat, { 
-        image: finalBuffer, 
-        caption: "✨ *Upscale Local Completado*\n🚀 *Motor:* UpscalerJS (TensorFlow.js)\n✅ Sin depender de APIs externas." 
-    }, { quoted: m })
+    const enhancedImage = await upscaleWithStellar(fileUrl)
 
-  } catch (e) {
-    console.error("Error en UpscalerJS:", e)
-    m.reply(`*[❗] ERROR LOCAL:* ${e.message || "Tu servidor no tiene suficiente potencia para este proceso."}`)
-  }
+    // 3. Enviamos el resultado
+    await conn.sendMessage(m.chat, { 
+        image: enhancedImage, 
+        caption: "✨ Mejora HD completada" 
+    }, { quoted: m })
+
+  } catch (e) {
+    console.error(e)
+    m.reply(`${tradutor.texto4} \n\n*Error:* ${e.message || e}`)
+  }
 }
 
-handler.help = ["localhd", "upscale"]
-handler.tags = ["ai"]
-handler.command = /^(localhd|upscale)$/i
-
+handler.help = ["remini", "hd", "enhance"]
+handler.tags = ["ai", "tools"]
+handler.command = ["remini", "hd", "enhance"]
 export default handler
+
+// ✅ Refactorizado para usar la API nativa Fetch y manejar URLs correctamente
+async function upscaleWithStellar(url) {
+  try {
+    // encodeURIComponent evita que la URL se rompa si contiene caracteres especiales
+    const endpoint = `https://api.stellarwa.xyz/tools/upscale?url=${encodeURIComponent(url)}&key=BrunoSobrino`
+    
+    const response = await fetch(endpoint, {
+      headers: { 'Accept': 'image/*' }
+    })
+
+    // Comprobamos si la API devolvió un error (ej. 404, 500)
+    if (!response.ok) {
+        throw new Error(`La API de Stellar devolvió el estado: ${response.status}`)
+    }
+
+    // Convertimos la respuesta a Buffer
+    const arrayBuffer = await response.arrayBuffer()
+    return Buffer.from(arrayBuffer)
+  } catch (err) {
+    throw new Error(`Fallo al mejorar la imagen: ${err.message}`)
+  }
+}
