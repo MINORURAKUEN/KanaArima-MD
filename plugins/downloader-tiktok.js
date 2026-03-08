@@ -3,118 +3,94 @@ import cheerio from 'cheerio';
 import fetch from 'node-fetch';
 import fs from 'fs';
 
-const handler = async (client, m, { conn, text, args, usedPrefix, command }) => {
-  // Configuración de idioma y mensajes (basado en tu primer código)
+const handler = async (m, { conn, text, args, usedPrefix, command }) => {
   const datas = global;
-  const idioma = datas.db?.data?.users[m.sender]?.language || global.defaultLenguaje || 'es';
-  let tradutor;
-  try {
-    const fileContent = fs.readFileSync(`./src/languages/${idioma}.json`);
-    tradutor = JSON.parse(fileContent).plugins.descargas_tiktok;
-  } catch {
-    // Fallback manual si no encuentra el archivo de traducción
-    tradutor = { 
-        texto1: 'Ingresa un enlace de TikTok.', 
-        texto2: 'Enlace no válido.',
-        texto9: 'Error al procesar la solicitud.' 
-    };
-  }
+  const idioma = datas.db.data.users[m.sender].language || global.defaultLenguaje;
+  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
+  const tradutor = _translate.plugins.descargas_tiktok;
 
-  if (!text) return m.reply(`🍒 ${tradutor.texto1}\nEjemplo: _${usedPrefix + command} https://vt.tiktok.com/ZSSm2fhLX/_`);
+  // 1. Validación de texto/enlace
+  if (!text) throw `*${tradutor.texto1}*\n\n*Ejemplo:* _${usedPrefix + command} https://vt.tiktok.com/ZSSm2fhLX/_`;
+  if (!/(?:https:?\/{2})?(?:w{3}|vm|vt|t)?\.?tiktok.com\/([^\s&]+)/gi.test(text)) throw `*${tradutor.texto2}*`;
 
-  // Detectar si es un enlace o una búsqueda
-  const isUrl = /(?:https:?\/{2})?(?:w{3}|vm|vt|t)?\.?tiktok.com\/([^\s&]+)/gi.test(text);
+  await m.reply(`*[⏳] ${tradutor.texto3}*`);
 
   try {
-    let data;
+    let videoUrl = null;
 
-    if (isUrl) {
-      // ESCENARIO 1: DESCARGA POR ENLACE DIRECTO
-      // Intentamos primero con tu API externa (url2)
-      const apiUrl = `${global.api?.url2 || ''}/dl/tiktok?url=${text}&key=${global.api?.key2 || ''}`;
-      const res = await fetch(apiUrl);
-      
-      if (res.ok) {
-        const json = await res.json();
-        data = json.data;
+    // --- MÉTODO 1: SCRAPING (instatiktok.com) ---
+    try {
+      const links = await fetchDownloadLinks(args[0], 'tiktok');
+      if (links && links.length > 0) {
+        // Busca el enlace HD o el primero disponible
+        videoUrl = links.find(link => /hdplay|download/i.test(link)) || links[0];
       }
-
-      // Si la API falla, usamos el Scraper manual (tu función fetchDownloadLinks) como fallback
-      if (!data) {
-        const links = await fetchDownloadLinks(text);
-        if (links && links.length > 0) {
-          const downloadUrl = links.find(link => /hdplay/.test(link)) || links[0];
-          return await client.sendMessage(m.chat, { video: { url: downloadUrl }, caption: '✅ Video descargado con éxito' }, { quoted: m });
-        }
-      }
-    } else {
-      // ESCENARIO 2: BÚSQUEDA POR TEXTO (Query)
-      const apiUrl = `${global.api?.url2}/search/tiktok?query=${encodeURIComponent(text)}&key=${global.api?.key2}`;
-      const res = await fetch(apiUrl);
-      const json = await res.json();
-      data = json.data?.[0]; // Tomamos el primer resultado
+    } catch (err) {
+      console.log('Error en Scraping, pasando a APIs...');
     }
 
-    if (!data) throw new Error('No results');
+    // --- MÉTODO 2: APIS ESTABLES (Fallback) ---
+    if (!videoUrl) {
+      const encoded = encodeURIComponent(args[0]);
+      const apis = [
+        `https://api.botcahx.eu.org/api/dowloader/tiktok?url=${encoded}&apikey=BrunoSobrino`,
+        `https://api.vreden.my.id/api/tiktok?url=${encoded}`,
+        `https://luminai.my.id/api/download/tiktok?url=${encoded}`
+      ];
 
-    // Construcción del Caption Estético
-    const { title, dl, duration, author, stats, music } = data;
-    const caption = `ㅤ۟∩　ׅ　★ ໌　ׅ　🅣𝗂𝗄𝖳𝗈𝗄 🅓ownload　ׄᰙ
-
-𖣣ֶㅤ֯⌗ 🌽  ׄ ⬭ *Título:* ${title || 'Sin título'}
-𖣣ֶㅤ֯⌗ 🍒  ׄ ⬭ *Autor:* ${author?.nickname || 'Desconocido'}
-𖣣ֶㅤ֯⌗ 🍓  ׄ ⬭ *Duración:* ${duration || 'N/A'}
-𖣣ֶㅤ֯⌗ 🦩  ׄ ⬭ *Likes:* ${(stats?.likes || 0).toLocaleString()}
-𖣣ֶㅤ֯⌗ 🌾  ׄ ⬭ *Vistas:* ${(stats?.views || 0).toLocaleString()}
-𖣣ֶㅤ֯⌗ 🪶  ׄ ⬭ *Audio:* ${music?.title || 'Original'}`.trim();
-
-    // Verificación de tipo de contenido y envío
-    const head = await fetch(dl, { method: 'HEAD' });
-    const contentType = head.headers.get('content-type') || '';
-
-    if (contentType.includes('video')) {
-      await client.sendMessage(m.chat, { video: { url: dl }, caption }, { quoted: m });
-    } else {
-      await m.reply(`🌽 El contenido no es compatible o no es un video.`);
+      for (const api of apis) {
+        try {
+          const res = await fetch(api);
+          if (!res.ok) continue;
+          const json = await res.json();
+          videoUrl = json.data?.url || json.result?.video || json.result?.url || (Array.isArray(json.data) ? json.data[0].url : null);
+          if (videoUrl && videoUrl.startsWith('http')) break;
+        } catch { continue; }
+      }
     }
+
+    if (!videoUrl) throw new Error('No se pudo obtener el video');
+
+    // 2. Envío del video
+    const cap = `✅ *TikTok descargado con éxito*\n\n${tradutor.texto8[0]} _${usedPrefix}tomp3_ ${tradutor.texto8[1]}`;
+    await conn.sendMessage(m.chat, { video: { url: videoUrl }, caption: cap }, { quoted: m });
 
   } catch (e) {
     console.error(e);
-    m.reply(`${tradutor.texto9}`);
+    m.reply(`*${tradutor.texto9}*`);
   }
 };
 
-// Función Scraper Manual (Tu lógica original de instatiktok)
-async function fetchDownloadLinks(url) {
-    try {
-        const SITE_URL = 'https://instatiktok.com/';
-        const form = new URLSearchParams();
-        form.append('url', url);
-        form.append('platform', 'tiktok');
-        form.append('siteurl', SITE_URL);
-
-        const res = await axios.post(`${SITE_URL}api`, form.toString(), {
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        });
-
-        if (res.data?.status !== 'success') return null;
-        
-        const $ = cheerio.load(res.data.html);
-        const links = [];
-        $('a.btn[href^="http"]').each((_, el) => {
-            const link = $(el).attr('href');
-            if (link) links.push(link);
-        });
-        return links;
-    } catch {
-        return null;
-    }
-}
-
-handler.command = /^(tiktok|ttdl|tiktokdl|tt|tiktokaudio)$/i;
-handler.category = 'downloader';
+// Aquí se definen los comandos a los que responderá el bot
+handler.help = ['tiktok', 'tt'];
+handler.tags = ['downloader'];
+handler.command = /^(tt|tiktok|tiktokdl|ttdl)$/i;
 
 export default handler;
+
+// --- FUNCIONES DE SCRAPING ---
+
+async function fetchDownloadLinks(text, platform) {
+  try {
+    const SITE_URL = 'https://instatiktok.com/';
+    const form = new URLSearchParams();
+    form.append('url', text);
+    form.append('platform', platform);
+
+    const res = await axios.post(`${SITE_URL}api`, form.toString(), {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'Origin': SITE_URL,
+        'Referer': SITE_URL,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'X-Requested-With': 'XMLHttpRequest'
+      }
+    });
+
+    const html = res?.data?.html;
+    if (!html || res?.data?.status !== 'success') return null;
+
+    const $ = cheerio.load(html);
+    const links = [];
+    $('a.btn[href^="http"]').each((_, el) => {
+      const link = $(el).attr('href');
