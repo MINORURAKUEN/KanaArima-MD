@@ -1,19 +1,28 @@
-import {toAudio} from '../src/libraries/converter.js';
+import { toAudio } from '../src/libraries/converter.js';
+import fs from 'fs'; // Faltaba esta importación
 
-const handler = async (m, {conn, usedPrefix, command}) => {
- const datas = global
- const idioma = datas.db.data.users[m.sender].language || global.defaultLenguaje
- const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`))
- const tradutor = _translate.plugins.convertidor_tomp3
+const handler = async (m, { conn, usedPrefix, command }) => {
+  const datas = global;
+  const idioma = datas.db.data.users[m.sender].language || global.defaultLenguaje;
+  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
+  const tradutor = _translate.plugins.convertidor_tomp3;
 
- const q = m.quoted ? m.quoted : m;
- const mime = (q || q.msg).mimetype || q.mediaType || '';
- if (!/video|audio/.test(mime)) throw `*${tradutor.texto1}*`;
- const media = await q.download();
- if (!media) throw `*${tradutor.texto2}*`;
- const audio = await toAudio(media, 'mp4');
- if (!audio.data) throw `*${tradutor.texto3}*`;
- conn.sendMessage(m.chat, { audio: audio.data, mimetype: 'audio/mpeg' }, { quoted: m });
+  const q = m.quoted ? m.quoted : m;
+  const mime = (q || q.msg).mimetype || q.mediaType || '';
+  
+  if (!/video|audio/.test(mime)) throw `*${tradutor.texto1}*`;
+  
+  const media = await q.download();
+  if (!media) throw `*${tradutor.texto2}*`;
+  
+  const audio = await toAudio(media, 'mp4');
+  if (!audio.data) throw `*${tradutor.texto3}*`;
+  
+  // FIX: Cambiamos 'audio/mpeg' por 'audio/mp4' para evitar el error de decodificación en WhatsApp
+  await conn.sendMessage(m.chat, { 
+    audio: audio.data, 
+    mimetype: 'audio/mp4' 
+  }, { quoted: m });
 };
 
 handler.help = ['tomp3'];
