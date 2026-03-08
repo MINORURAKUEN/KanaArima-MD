@@ -18,15 +18,16 @@ const handler = async (m, { conn, text, args, usedPrefix, command }) => {
     let videoUrl = null;
     const links = await fetchDownloadLinks(args[0], 'tiktok');
     
+    // Priorizamos explícitamente enlaces que contengan 'hdplay'
     if (links && links.length > 0) {
-      videoUrl = links.find(link => /hdplay|download/i.test(link)) || links[0];
+      videoUrl = links.find(link => /hdplay/i.test(link)) || links.find(link => /download/i.test(link)) || links[0];
     }
 
-    // INTENTO 2: Fallback con APIs estables usando solo axios
+    // INTENTO 2: Fallback con APIs estables (Forzando calidad HD)
     if (!videoUrl) {
       const encoded = encodeURIComponent(args[0]);
       const apis = [
-        `https://www.tikwm.com/api/?url=${encoded}`,
+        `https://www.tikwm.com/api/?url=${encoded}&hd=1`, // Añadido &hd=1
         `https://api.vreden.my.id/api/tiktok?url=${encoded}`,
         `https://luminai.my.id/api/download/tiktok?url=${encoded}`
       ];
@@ -34,8 +35,10 @@ const handler = async (m, { conn, text, args, usedPrefix, command }) => {
       for (const api of apis) {
         try {
           const { data: json } = await axios.get(api);
-          // tikwm usa json.data.play, otras usan url
-          videoUrl = json.data?.play || json.data?.url || json.result?.url || (Array.isArray(json.data) ? json.data[0].url : null);
+          
+          // Priorizamos json.data.hdplay antes que json.data.play
+          videoUrl = json.data?.hdplay || json.data?.play || json.data?.url || json.result?.url || (Array.isArray(json.data) ? json.data[0].url : null);
+          
           if (videoUrl) break;
         } catch (err) { 
           console.log(`[API Fallback Error] ${api}:`, err.message);
@@ -44,9 +47,9 @@ const handler = async (m, { conn, text, args, usedPrefix, command }) => {
       }
     }
 
-    if (!videoUrl) throw new Error('No se pudo obtener el enlace del video de ninguna fuente.');
+    if (!videoUrl) throw new Error('No se pudo obtener el enlace HD del video.');
 
-    const cap = `✅ *TikTok descargado con éxito*\n${tradutor.texto8[0]} _${usedPrefix}tomp3_ ${tradutor.texto8[1]}`;
+    const cap = `✅ *TikTok descargado en alta calidad*\n${tradutor.texto8[0]} _${usedPrefix}tomp3_ ${tradutor.texto8[1]}`;
     await conn.sendMessage(m.chat, { video: { url: videoUrl }, caption: cap }, { quoted: m });
 
   } catch (e) {
