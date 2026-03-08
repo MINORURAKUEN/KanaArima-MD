@@ -3,21 +3,23 @@ import cheerio from 'cheerio';
 import fetch from 'node-fetch';
 import fs from 'fs';
 
-// CAMBIO CRÍTICO: Eliminamos las llaves { } del segundo argumento
-// Esto acepta CUALQUIER cosa que envíe el handler.js en la línea 971
-let handler = async (m, context) => {
-  // Si el handler envía un objeto, lo usamos. Si no, usamos 'this' (que suele ser conn)
-  const conn = context.conn || this;
-  const text = context.text || m.text;
-  const args = context.args || [];
-  const usedPrefix = context.usedPrefix || '.';
-  const command = context.command || 'tiktok';
-
+// Quitamos las llaves { } del segundo argumento para evitar el error de "undefined"
+let handler = async (m, _context) => {
+  // Intentamos obtener 'conn' de donde sea que esté (this o el contexto)
+  const conn = _context?.conn || m.conn || this;
+  
+  // Si no hay conexión o mensaje, salimos sin error
   if (!m || !conn) return;
 
-  // Manejo de traducciones
-  const user = global.db && global.db.data ? global.db.data.users[m.sender] : {};
-  const idioma = user?.language || global.defaultLenguaje || 'es';
+  // Variables de apoyo seguras
+  const text = _context?.text || m.text || '';
+  const args = _context?.args || text.trim().split` `.slice(1) || [];
+  const usedPrefix = _context?.usedPrefix || (text.match(/^[./!#]/) ? text[0] : '.');
+  const command = _context?.command || 'tiktok';
+
+  // Manejo de traducciones (con protección si no existe global.db)
+  const user = global.db?.data?.users?.[m.sender] || {};
+  const idioma = user.language || global.defaultLenguaje || 'es';
   
   let tradutor;
   try {
@@ -33,14 +35,16 @@ let handler = async (m, context) => {
     };
   }
 
-  if (!text) throw `*${tradutor.texto1}*\n\n*Ejemplo:* _${usedPrefix + command} https://vt.tiktok.com/ZSSm2fhLX/_`;
-  
+  // Validación de link
+  if (!text) throw `*${tradutor.texto1}*\n\n*Ejemplo:* _${usedPrefix + command} https://vt.tiktok.com/ZS123/_`;
+  if (!/tiktok\.com/i.test(text)) throw `*${tradutor.texto2}*`;
+
   await m.reply(`*[⏳] ${tradutor.texto3}*`);
 
   try {
     let videoUrl = null;
 
-    // MÉTODO 1: SCRAPING
+    // MÉTODO 1: SCRAPING (instatiktok.com)
     try {
       const links = await fetchDownloadLinks(text, 'tiktok');
       if (links && links.length > 0) {
@@ -48,7 +52,7 @@ let handler = async (m, context) => {
       }
     } catch { }
 
-    // MÉTODO 2: APIS
+    // MÉTODO 2: APIS (Fallback)
     if (!videoUrl) {
       const encoded = encodeURIComponent(text);
       const apis = [
@@ -60,7 +64,6 @@ let handler = async (m, context) => {
       for (const api of apis) {
         try {
           const res = await fetch(api);
-          if (!res.ok) continue;
           const json = await res.json();
           videoUrl = json.data?.url || json.result?.video || json.result?.url || (Array.isArray(json.data) ? json.data[0].url : null);
           if (videoUrl && videoUrl.startsWith('http')) break;
@@ -70,7 +73,7 @@ let handler = async (m, context) => {
 
     if (!videoUrl) throw new Error();
 
-    const cap = `✅ *TikTok descargado con éxito*\n\n${tradutor.texto8[0]} _${usedPrefix}tomp3_ ${tradutor.texto8[1]}`;
+    const cap = `✅ *TikTok descargado*\n\n${tradutor.texto8[0]} _${usedPrefix}tomp3_ ${tradutor.texto8[1]}`;
     await conn.sendMessage(m.chat, { video: { url: videoUrl }, caption: cap }, { quoted: m });
 
   } catch (e) {
@@ -84,21 +87,24 @@ handler.command = /^(tt|tiktok|tiktokdl|ttdl)$/i;
 
 export default handler;
 
-async function fetchDownloadLinks(text, platform) {
+// Función de apoyo para scraping
+async function fetchDownloadLinks(url, platform) {
   try {
     const SITE_URL = 'https://instatiktok.com/';
     const form = new URLSearchParams();
-    form.append('url', text);
+    form.append('url', url);
     form.append('platform', platform);
-
     const res = await axios.post(`${SITE_URL}api`, form.toString(), {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'User-Agent': 'Mozilla/5.0' }
     });
-
     const html = res?.data?.html;
+    if (!html) return null;
+    const $ = cheerio.load(html);
+    const links = [];
+    $('a.btn[href^="http"]').each((_, el) => { links.push($(el).attr('href')); });
+    return links;
+  } catch { return null; }
+}
     if (!html) return null;
 
     const $ = cheerio.load(html);
