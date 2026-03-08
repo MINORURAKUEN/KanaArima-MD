@@ -1,81 +1,112 @@
 import { File } from 'megajs';
+import axios from 'axios';
+import cheerio from 'cheerio';
 import { lookup } from 'mime-types';
 import fs from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { performance } from 'perf_hooks';
+import { pipeline } from 'stream/promises';
 
 const handler = async (m, { conn, args, usedPrefix, command }) => {
-    if (!args[0]) throw `*< DESCARGAS - MEGA />*\n\n*[ ℹ️ ] Ingrese un enlace de Mega.*\n\n*[ 💡 ] Ejemplo:* ${usedPrefix + command} https://mega.nz/file/xxxx#yyyy`;
+    const url = args[0];
+    if (!url) throw `*< DESCARGAS - MULTIPLATAFORMA />*\n\n*[ ℹ️ ] Ingrese un enlace de Mega o MediaFire.*\n\n*Ejemplo:* ${usedPrefix + command} https://www.mediafire.com/file/xxx`;
 
-    try {
-        // 1. Cargar metadatos del archivo
-        console.log(`\n[MEGA] 🚀 Procesando enlace...`);
-        const file = File.fromURL(args[0]);
-        await file.loadAttributes();
+    const isMega = /mega\.nz/.test(url);
+    const isMediaFire = /mediafire\.com/.test(url);
 
-        const name = file.name;
-        const size = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
-        const mime = lookup(name) || 'application/octet-stream';
+    if (!isMega && !isMediaFire) throw `❌ *Enlace no válido.* Solo se admiten Mega y MediaFire.`;
 
-        // Validación de seguridad (ejemplo: 300MB)
-        if (file.size > 300 * 1024 * 1024) {
-            return m.reply(`⚠️ *El archivo es demasiado grande (${size}).* El límite es de 300MB.`);
-        }
+    // Límites de seguridad
+    const LIMIT_MEGA = 400 * 1024 * 1024; // 400MB
+    const LIMIT_MF = 1.8 * 1024 * 1024 * 1024; // 1.8GB
+    
+    let tempPath;
 
-        await m.reply(`*📥 Descargando de Mega...*\n\n*📝 Nombre:* ${name}\n*📁 Peso:* ${size}\n\n_El progreso se monitorea en la terminal._`);
+    try {
+        const startTime = performance.now();
+        let name, sizeH, downloadUrl;
 
-        // 2. Configurar ruta temporal y Stream
-        const tempPath = join(tmpdir(), `${Date.now()}_${name.replace(/\s+/g, '_')}`);
-        const writer = fs.createWriteStream(tempPath);
-        const stream = file.download();
+        if (isMega) {
+            // --- PROCESO MEGA ---
+            const file = File.fromURL(url);
+            await file.loadAttributes();
+            name = file.name;
+            const sizeBytes = file.size;
+            sizeH = (sizeBytes / (1024 * 1024)).toFixed(2) + ' MB';
+            
+            if (sizeBytes > LIMIT_MEGA) return m.reply(`⚠️ *Mega:* El archivo excede el límite de 400MB. (${sizeH})`);
+            
+            await m.reply(`📥 *Descargando de Mega:* ${name}\n⚖️ *Tamaño:* ${sizeH}`);
+            tempPath = join(tmpdir(), `mega_${Date.now()}_${name.replace(/\s+/g, '_')}`);
+            await pipeline(file.download(), fs.createWriteStream(tempPath));
 
-        console.log(`[MEGA] 📦 Descargando: ${name}`);
+        } else {
+            // --- PROCESO MEDIAFIRE ---
+            const mfData = await mediafireDl(url);
+            name = mfData.name;
+            downloadUrl = mfData.link;
+            
+            // Validación de tamaño vía HEAD request (Evita descargar si es > 1.8GB)
+            const head = await axios.head(downloadUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+            const sizeBytes = parseInt(head.headers['content-length'] || '0');
+            sizeH = sizeBytes > 0 ? (sizeBytes / (1024 * 1024)).toFixed(2) + ' MB' : mfData.sizeH;
 
-        let downloadedLength = 0;
-        const totalLength = file.size;
+            if (sizeBytes > LIMIT_MF) return m.reply(`⚠️ *MediaFire:* El archivo excede el límite de 1.8GB. (${sizeH})`);
 
-        // 3. Monitoreo en Terminal
-        stream.on('data', (chunk) => {
-            downloadedLength += chunk.length;
-            const progress = ((downloadedLength / totalLength) * 100).toFixed(2);
-            
-            process.stdout.clearLine(0);
-            process.stdout.cursorTo(0);
-            process.stdout.write(`[MEGA] 🔽 PROGRESO: ${progress}% (${(downloadedLength / 1024 / 1024).toFixed(2)} MB / ${size})`);
-        });
+            await m.reply(`📥 *Descargando de MediaFire:* ${name}\n⚖️ *Tamaño:* ${sizeH}\n\n_Procesando archivo pesado..._`);
+            
+            tempPath = join(tmpdir(), `mf_${Date.now()}_${name.replace(/\s+/g, '_')}`);
+            const response = await axios({
+                method: 'get',
+                url: downloadUrl,
+                responseType: 'stream',
+                headers: { 'User-Agent': 'Mozilla/5.0' }
+            });
 
-        stream.pipe(writer);
+            await pipeline(response.data, fs.createWriteStream(tempPath));
+        }
 
-        // 4. Finalización y envío
-        writer.on('finish', async () => {
-            console.log(`\n[MEGA] ✅ Descarga completa. Subiendo a WhatsApp...`);
-            
-            try {
-                await conn.sendFile(m.chat, tempPath, name, '', m, null, { 
-                    mimetype: mime, 
-                    asDocument: true 
-                });
-                console.log(`[MEGA] ✨ Enviado con éxito.\n`);
-            } catch (e) {
-                console.error(`[MEGA] ❌ Error al enviar:`, e.message);
-                m.reply('❌ Error al subir el archivo a WhatsApp.');
-            } finally {
-                // Limpieza de disco
-                if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-            }
-        });
+        const mime = lookup(name) || 'application/octet-stream';
+        const totalTime = ((performance.now() - startTime) / 1000).toFixed(2);
+        
+        // --- ENVÍO A WHATSAPP ---
+        // Usar { url: tempPath } permite a la librería leer directamente del disco
+        await conn.sendMessage(m.chat, { 
+            document: { url: tempPath }, 
+            fileName: name, 
+            mimetype: mime,
+            caption: `✅ *Descarga Exitosa (${totalTime}s)*\n📄 *Nombre:* ${name}\n⚖️ *Tamaño:* ${sizeH}`
+        }, { quoted: m });
 
-        writer.on('error', (err) => {
-            console.error('[MEGA] ❌ Error de escritura:', err);
-            if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-            m.reply('❌ Error crítico al procesar el archivo.');
-        });
-
-    } catch (error) {
-        console.error('[MEGA] ❌ Error:', error.message);
-        await m.reply(`❌ Enlace inválido o error de conexión. Asegúrate de incluir la clave de descifrado.`);
-    }
+    } catch (error) {
+        console.error(error);
+        await m.reply(`❌ *Error:* ${error.message}`);
+    } finally {
+        // Limpieza de archivos temporales para no llenar el VPS
+        if (tempPath && fs.existsSync(tempPath)) {
+            try { fs.unlinkSync(tempPath); } catch (e) { console.error('Error al borrar temporal:', e); }
+        }
+    }
 };
 
-handler.command = /^(mega|dlmega|mg)$/i;
+// Scraper de MediaFire actualizado
+async function mediafireDl(url) {
+    const res = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' }});
+    const $ = cheerio.load(res.data);
+    const downloadButton = $('#downloadButton');
+    let link = downloadButton.attr('href');
+    
+    if (!link || link.includes('javascript:void(0)')) {
+        link = res.data.match(/href="(https:\/\/download\d+\.mediafire\.com[^"]+)"/)?.[1];
+    }
+    
+    let name = $('.promoDownloadName').first().attr('title') || $('.filename').first().text().trim();
+    name = name.replace(/\s+/g, ' ').split('\n')[0].trim();
+    
+    const sizeH = downloadButton.text().replace(/Download|[\(\)]|\s+/g, ' ').trim() || 'Desconocido';
+    return { name, link, sizeH };
+}
+
+handler.command = /^(mega|mg|mediafire|mf)$/i;
 export default handler;
