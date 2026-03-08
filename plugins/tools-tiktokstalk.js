@@ -3,21 +3,24 @@ import cheerio from 'cheerio';
 import fetch from 'node-fetch';
 import fs from 'fs';
 
-// En tu core, 'this' es la conexión (conn)
-// Los argumentos estándar que recibe el handler son (m, { conn, text, args, usedPrefix, command })
+/**
+ * Código optimizado para KanaArima-MD
+ * Solución al error de desestructuración en línea 971 del handler.js
+ */
 let handler = async (m, { conn, text, args, usedPrefix, command }) => {
-  if (!m) return;
+  // Verificación de seguridad para evitar 'undefined'
+  if (!m || !conn) return;
 
-  // Acceso a la base de datos para traducciones (basado en tu handler.js)
-  const user = global.db.data.users[m.sender];
+  // Manejo de base de datos y traducciones
+  const user = global.db && global.db.data ? global.db.data.users[m.sender] : {};
   const idioma = user?.language || global.defaultLenguaje || 'es';
   
-  // Intentar cargar traducción, si falla usamos un fallback
   let tradutor;
   try {
     const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
     tradutor = _translate.plugins.descargas_tiktok;
-  } catch {
+  } catch (e) {
+    // Textos de respaldo si falla el archivo de idioma
     tradutor = { 
       texto1: 'Ingrese un enlace de TikTok', 
       texto2: 'Enlace no válido', 
@@ -27,6 +30,7 @@ let handler = async (m, { conn, text, args, usedPrefix, command }) => {
     };
   }
 
+  // Validaciones del mensaje
   if (!text) throw `*${tradutor.texto1}*\n\n*Ejemplo:* _${usedPrefix + command} https://vt.tiktok.com/ZSSm2fhLX/_`;
   if (!/(?:https:?\/{2})?(?:w{3}|vm|vt|t)?\.?tiktok.com\/([^\s&]+)/gi.test(text)) throw `*${tradutor.texto2}*`;
 
@@ -35,17 +39,17 @@ let handler = async (m, { conn, text, args, usedPrefix, command }) => {
   try {
     let videoUrl = null;
 
-    // --- MÉTODO 1: SCRAPING ---
+    // --- MÉTODO 1: SCRAPING (instatiktok.com) ---
     try {
       const links = await fetchDownloadLinks(args[0], 'tiktok');
       if (links && links.length > 0) {
         videoUrl = links.find(link => /hdplay|download/i.test(link)) || links[0];
       }
     } catch { 
-      console.log("Fallo scraping, intentando APIs...");
+      console.log("Fallo scraping, intentando APIs de respaldo...");
     }
 
-    // --- MÉTODO 2: APIS (Fallback) ---
+    // --- MÉTODO 2: APIS ESTABLES (Fallback) ---
     if (!videoUrl) {
       const encoded = encodeURIComponent(args[0]);
       const apis = [
@@ -65,11 +69,11 @@ let handler = async (m, { conn, text, args, usedPrefix, command }) => {
       }
     }
 
-    if (!videoUrl) throw new Error();
+    if (!videoUrl) throw new Error('No se pudo obtener el video');
 
     const cap = `✅ *TikTok descargado con éxito*\n\n${tradutor.texto8[0]} _${usedPrefix}tomp3_ ${tradutor.texto8[1]}`;
     
-    // Usamos 'conn' que viene de la desestructuración
+    // Envío final del video
     await conn.sendMessage(m.chat, { video: { url: videoUrl }, caption: cap }, { quoted: m });
 
   } catch (e) {
@@ -84,6 +88,7 @@ handler.command = /^(tt|tiktok|tiktokdl|ttdl)$/i;
 
 export default handler;
 
+// --- FUNCIÓN DE EXTRACCIÓN ---
 async function fetchDownloadLinks(text, platform) {
   try {
     const SITE_URL = 'https://instatiktok.com/';
@@ -99,6 +104,19 @@ async function fetchDownloadLinks(text, platform) {
     });
 
     const html = res?.data?.html;
+    if (!html) return null;
+
+    const $ = cheerio.load(html);
+    const links = [];
+    $('a.btn[href^="http"]').each((_, el) => {
+      const link = $(el).attr('href');
+      if (link) links.push(link);
+    });
+    return links;
+  } catch {
+    return null;
+  }
+}
     if (!html) return null;
 
     const $ = cheerio.load(html);
