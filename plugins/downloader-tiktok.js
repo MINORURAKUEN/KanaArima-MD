@@ -1,6 +1,5 @@
 import axios from 'axios';
 import cheerio from 'cheerio';
-import fetch from 'node-fetch';
 import fs from 'fs';
 
 const handler = async (m, { conn, text, args, usedPrefix, command }) => {
@@ -15,7 +14,7 @@ const handler = async (m, { conn, text, args, usedPrefix, command }) => {
   await m.reply(`*[⏳] ${tradutor.texto3}*`);
 
   try {
-    // INTENTO 1: Scraping instatiktok.com (Tu método original)
+    // INTENTO 1: Scraping instatiktok.com
     let videoUrl = null;
     const links = await fetchDownloadLinks(args[0], 'tiktok');
     
@@ -23,26 +22,29 @@ const handler = async (m, { conn, text, args, usedPrefix, command }) => {
       videoUrl = links.find(link => /hdplay|download/i.test(link)) || links[0];
     }
 
-    // INTENTO 2: Fallback con APIs estables (Si el scraping falla)
+    // INTENTO 2: Fallback con APIs estables usando solo axios
     if (!videoUrl) {
       const encoded = encodeURIComponent(args[0]);
       const apis = [
-        `https://api.botcahx.eu.org/api/dowloader/tiktok?url=${encoded}&apikey=BrunoSobrino`,
+        `https://www.tikwm.com/api/?url=${encoded}`,
         `https://api.vreden.my.id/api/tiktok?url=${encoded}`,
         `https://luminai.my.id/api/download/tiktok?url=${encoded}`
       ];
 
       for (const api of apis) {
         try {
-          const res = await fetch(api);
-          const json = await res.json();
-          videoUrl = json.data?.url || json.result?.url || (Array.isArray(json.data) ? json.data[0].url : null);
+          const { data: json } = await axios.get(api);
+          // tikwm usa json.data.play, otras usan url
+          videoUrl = json.data?.play || json.data?.url || json.result?.url || (Array.isArray(json.data) ? json.data[0].url : null);
           if (videoUrl) break;
-        } catch { continue; }
+        } catch (err) { 
+          console.log(`[API Fallback Error] ${api}:`, err.message);
+          continue; 
+        }
       }
     }
 
-    if (!videoUrl) throw new Error();
+    if (!videoUrl) throw new Error('No se pudo obtener el enlace del video de ninguna fuente.');
 
     const cap = `✅ *TikTok descargado con éxito*\n${tradutor.texto8[0]} _${usedPrefix}tomp3_ ${tradutor.texto8[1]}`;
     await conn.sendMessage(m.chat, { video: { url: videoUrl }, caption: cap }, { quoted: m });
