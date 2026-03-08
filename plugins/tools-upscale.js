@@ -1,68 +1,67 @@
-import axios from 'axios';
-import fs from 'fs';
+import fs from "fs"
+// ❌ import axios from "axios" (¡Eliminado!)
+import uploadImage from "../src/libraries/uploadImage.js"
 
-let handler = async (m, { conn, text, usedPrefix, command }) => {
-    const idioma = global.db.data.users[m.sender]?.language || global.defaultLenguaje;
-    const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
-    const tradutor = _translate.plugins.descargas_facebook;
+const handler = async (m, { conn, usedPrefix, command }) => {
+  // Uso de encadenamiento opcional (?.) por si el usuario aún no está en la base de datos
+  const idioma = global.db.data.users[m.sender]?.language || global.defaultLenguaje
+  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`))
+  const tradutor = _translate.plugins.herramientas_hd
 
-    if (!text) throw `_*${tradutor.texto1[0]}*_\n\n*${tradutor.texto1[1]}*\n\n*${tradutor.texto1[2]}* ${usedPrefix + command} https://www.facebook.com/share/v/1E5R3gRuHk/`;
+  try {
+    const q = m.quoted ? m.quoted : m
+    const mime = (q.msg || q).mimetype || q.mediaType || ""
 
-    try {
-        await m.reply('*[⏳] Extrayendo video con bypass de seguridad...*');
+    // 1. Verificamos que sea una imagen
+    if (!mime) throw `${tradutor.texto1} ${usedPrefix + command}*`
+    if (!/image\/(jpe?g|png)/.test(mime)) throw `${tradutor.texto2[0]} (${mime}) ${tradutor.texto2[1]}`
 
-        // Usamos una API de bypass que no depende de instatiktok
-        const videoData = await fetchFacebookBypass(text);
+    await m.reply(tradutor.texto3)
 
-        if (!videoData || !videoData.url) {
-            throw new Error("El video es privado o el enlace ha caducado.");
-        }
+    // 2. Procesamiento de la imagen
+    const img = await q.download()
+    const fileUrl = await uploadImage(img)
+    
+    if (!fileUrl) throw "Error al subir la imagen al servidor temporal."
 
-        await conn.sendMessage(m.chat, { 
-            video: { url: videoData.url }, 
-            caption: `*📥 Facebook Downloader Pro*\n\n*Calidad:* ${videoData.quality || 'Estándar'}`,
-            mimetype: 'video/mp4'
-        }, { quoted: m });
+    const enhancedImage = await upscaleWithStellar(fileUrl)
 
-    } catch (error) {
-        console.error('Error Crítico FB:', error);
-        m.reply(`*[❌] No se pudo descargar el video.*\n\n*Motivo:* ${error.message}\n_Sugerencia: Verifica que el video sea público._`);
-    }
-};
+    // 3. Enviamos el resultado
+    await conn.sendMessage(m.chat, { 
+        image: enhancedImage, 
+        caption: "✨ Mejora HD completada" 
+    }, { quoted: m })
 
-handler.command = /^(facebook|fb|fbdl)$/i;
-handler.tags = ['downloader'];
-handler.help = ['facebook'];
-export default handler;
-
-/**
- * Función que utiliza una API de bypass para saltar restricciones de Meta
- */
-async function fetchFacebookBypass(url) {
-    // Lista de APIs de respaldo con mayor tasa de éxito en 2026
-    const apiEndpoints = [
-        `https://api.botcahx.eu.org/api/dowloader/fbdown?url=${encodeURIComponent(url)}&apikey=BrunoSobrino`,
-        `https://api.alyachan.dev/api/facebook?url=${encodeURIComponent(url)}&apikey=Gata-Dios`,
-        `https://api.vreden.my.id/api/facebook?url=${encodeURIComponent(url)}`
-    ];
-
-    for (let api of apiEndpoints) {
-        try {
-            const { data } = await axios.get(api, { timeout: 15000 });
-            
-            // Adaptador para diferentes formatos de respuesta de APIs
-            const result = data.result || data.data;
-            const videoUrl = result?.url || result?.video || (Array.isArray(result) ? result[0].url : null);
-
-            if (videoUrl && videoUrl.startsWith('http')) {
-                return { 
-                    url: videoUrl, 
-                    quality: result?.quality || 'HD' 
-                };
-            }
-        } catch (e) {
-            continue; // Si una falla, probamos la siguiente inmediatamente
-        }
-    }
-    return null;
+  } catch (e) {
+    console.error(e)
+    m.reply(`${tradutor.texto4} \n\n*Error:* ${e.message || e}`)
+  }
 }
+
+handler.help = ["remini", "hd", "enhance"]
+handler.tags = ["ai", "tools"]
+handler.command = ["remini", "hd", "enhance"]
+export default handler
+
+// ✅ Refactorizado para usar la API nativa Fetch y manejar URLs correctamente
+async function upscaleWithStellar(url) {
+  try {
+    // encodeURIComponent evita que la URL se rompa si contiene caracteres especiales
+    const endpoint = `https://api.stellarwa.xyz/tools/upscale?url=${encodeURIComponent(url)}&key=BrunoSobrino`
+    
+    const response = await fetch(endpoint, {
+      headers: { 'Accept': 'image/*' }
+    })
+
+    // Comprobamos si la API devolvió un error (ej. 404, 500)
+    if (!response.ok) {
+        throw new Error(`La API de Stellar devolvió el estado: ${response.status}`)
+    }
+
+    // Convertimos la respuesta a Buffer
+    const arrayBuffer = await response.arrayBuffer()
+    return Buffer.from(arrayBuffer)
+  } catch (err) {
+    throw new Error(`Fallo al mejorar la imagen: ${err.message}`)
+  }
+    }
