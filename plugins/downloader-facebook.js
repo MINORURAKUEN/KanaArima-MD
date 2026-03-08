@@ -6,89 +6,68 @@ let handler = async (m, { args, command, conn }) => {
   const link = args[0]
   const isUrl = link.match(/https?:\/\//i)
 
-  // 1. LÓGICA DE INSTAGRAM Y FACEBOOK (POR ENLACE)
+  // 1. LÓGICA DE INSTAGRAM Y FACEBOOK
   if (isUrl && (link.includes('facebook.com') || link.includes('fb.watch') || link.includes('instagram.com'))) {
     await m.reply('*[⏳] Procesando enlace de Redes Sociales...*')
     try {
-      let videoUrl = null
-      let type = link.includes('facebook.com') || link.includes('fb.watch') ? "Facebook" : "Instagram"
-
-      if (type === "Facebook") videoUrl = await getFacebookVideo(link)
-      else videoUrl = await getInstagramVideo(link)
-
-      if (!videoUrl) throw `*[ ❌ ] No se pudo obtener el video de ${type}.*`
-      await conn.sendFile(m.chat, videoUrl, 'video.mp4', `✅ *Video de ${type} descargado con éxito*`, m)
+      let videoUrl = await tryApis(isUrl && (link.includes('facebook.com') || link.includes('fb.watch')) ? "fb" : "ig", link)
+      if (!videoUrl) throw `*[ ❌ ] No se pudo obtener el video.*`
+      await conn.sendFile(m.chat, videoUrl, 'video.mp4', `✅ *Descargado con éxito*`, m)
     } catch (e) {
       m.reply(`❌ *Error:* ${e.message || e}`)
     }
     return
   }
 
-  // 2. LÓGICA DE TIKTOK (ENLACE O BÚSQUEDA)
+  // 2. LÓGICA DE TIKTOK (CON CORRECCIÓN DE JSON)
   if (!isUrl || link.includes('tiktok.com')) {
     await m.reply('*[⏳] Buscando/Procesando en TikTok...*')
     try {
-      // Definimos la URL de la API (Asegúrate de tener estas variables definidas o cámbiadas por tus valores reales)
-      // Usaré placeholders basados en tu código
-      const baseURL = "https://api.vreden.my.id" // Ejemplo de base
-      const apiKey = "Tu_Key_Aqui" 
+      const baseURL = "https://api.vreden.my.id" 
+      const apiKey = "Tu_Key_Aqui" // <--- ASEGÚRATE DE QUE ESTA KEY SEA VÁLIDA
       
       let apiUrl = isUrl 
         ? `${baseURL}/dl/tiktok?url=${link}&key=${apiKey}`
         : `${baseURL}/search/tiktok?query=${encodeURIComponent(args.join(" "))}&key=${apiKey}`
 
       const res = await fetch(apiUrl)
+      
+      // Validamos que la respuesta sea JSON antes de parsear
+      const contentType = res.headers.get("content-type")
+      if (!contentType || !contentType.includes("application/json")) {
+        throw "La API de TikTok está temporalmente fuera de servicio (Mantenimiento)."
+      }
+
       const json = await res.json()
       const data = isUrl ? json.data : json.data?.[0]
 
-      if (!data) throw '🍒 No se encontraron resultados.'
+      if (!data || !data.dl) throw '🍒 No se encontraron resultados o el video es privado.'
 
       const { title, dl, duration, author, stats, music } = data
-      const caption = `ㅤ۟∩　ׅ　★ ໌　ׅ　🅣𝗂𝗄𝖳𝗈𝗄 🅓ownload　ׄᰙ
+      const caption = `ㅤ۟∩　ׅ　★ ໌　ׅ　🅣𝗂𝗄𝖳𝗈𝗄 🅓ownload\n\n𖣣ֶㅤ֯⌗ 🌽 *Título:* ${title || 'Sin título'}\n𖣣ֶㅤ֯⌗ 🍒 *Autor:* ${author?.nickname || 'Desconocido'}\n𖣣ֶㅤ֯⌗ 🌾 *Vistas:* ${(stats?.views || 0).toLocaleString()}\n𖣣ֶㅤ֯⌗ 🪶 *Audio:* ${music?.title || 'Original'}`.trim()
 
-𖣣ֶㅤ֯⌗ 🌽 *Título:* ${title || 'Sin título'}
-𖣣ֶㅤ֯⌗ 🍒 *Autor:* ${author?.nickname || 'Desconocido'}
-𖣣ֶㅤ֯⌗ 🍓 *Duración:* ${duration || 'N/A'}
-𖣣ֶㅤ֯⌗ 🦩 *Likes:* ${(stats?.likes || 0).toLocaleString()}
-𖣣ֶㅤ֯⌗ 🌾 *Vistas:* ${(stats?.views || 0).toLocaleString()}
-𖣣ֶㅤ֯⌗ 🪶 *Audio:* ${music?.title || 'Original'}`.trim()
+      await conn.sendMessage(m.chat, { video: { url: dl }, caption }, { quoted: m })
 
-      const head = await fetch(dl, { method: 'HEAD' })
-      if (head.headers.get('content-type').includes('video')) {
-        await conn.sendMessage(m.chat, { video: { url: dl }, caption }, { quoted: m })
-      } else {
-        throw 'El contenido no es un video compatible.'
-      }
     } catch (e) {
-      m.reply(`❌ *Error en TikTok:* ${e.message || 'Servidor no disponible'}`)
+      console.error(e)
+      m.reply(`❌ *Error en TikTok:* ${typeof e === 'string' ? e : 'La API no respondió correctamente. Intenta más tarde.'}`)
     }
   }
 }
 
-/** * FUNCIONES DE APOYO (APIs DE RESPALDO)
- */
-async function getFacebookVideo(link) {
-  const apis = [
-    `https://api.botcahx.eu.org/api/dowloader/fbdown?url=${encodeURIComponent(link)}&apikey=BrunoSobrino`,
-    `https://eliasar-yt-api.vercel.app/api/facebookdl?link=${encodeURIComponent(link)}`
-  ]
-  return await tryApis(apis)
-}
+// FUNCIONES DE APOYO CON MANEJO DE JSON SEGURO
+async function tryApis(type, link) {
+  const encoded = encodeURIComponent(link)
+  const apis = type === "fb" 
+    ? [`https://api.botcahx.eu.org/api/dowloader/fbdown?url=${encoded}&apikey=BrunoSobrino`]
+    : [`https://api.vreden.my.id/api/instagram?url=${encoded}`]
 
-async function getInstagramVideo(link) {
-  const apis = [
-    `https://api.botcahx.eu.org/api/dowloader/igdl?url=${encodeURIComponent(link)}&apikey=BrunoSobrino`,
-    `https://api.vreden.my.id/api/instagram?url=${encodeURIComponent(link)}`
-  ]
-  return await tryApis(apis)
-}
-
-async function tryApis(apis) {
   for (const url of apis) {
     try {
       const res = await fetch(url)
+      if (!res.ok) continue
       const json = await res.json()
-      let result = json.data?.url || json.result?.url || (Array.isArray(json.result) ? json.result[0].url : null)
+      const result = json.data?.url || json.result?.url || (Array.isArray(json.result) ? json.result[0].url : null)
       if (result) return result
     } catch { continue }
   }
