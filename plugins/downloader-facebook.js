@@ -1,95 +1,101 @@
 import fetch from 'node-fetch'
 
 let handler = async (m, { args, command, conn }) => {
-  if (!args[0]) throw `*⚠️ Uso correcto: .${command} <enlace de FB, IG o TikTok>*`
+  if (!args[0]) throw `*⚠️ Uso correcto: .${command} <enlace o búsqueda>*`
 
-  await m.reply('*[⏳] Analizando enlace y procesando descarga...*')
+  const link = args[0]
+  const isUrl = link.match(/https?:\/\//i)
 
-  try {
-    const link = args[0]
-    let videoUrl = null
-    let type = ""
+  // 1. LÓGICA DE INSTAGRAM Y FACEBOOK (POR ENLACE)
+  if (isUrl && (link.includes('facebook.com') || link.includes('fb.watch') || link.includes('instagram.com'))) {
+    await m.reply('*[⏳] Procesando enlace de Redes Sociales...*')
+    try {
+      let videoUrl = null
+      let type = link.includes('facebook.com') || link.includes('fb.watch') ? "Facebook" : "Instagram"
 
-    // Identificación del tipo de enlace
-    if (link.includes('facebook.com') || link.includes('fb.watch')) {
-      videoUrl = await getFacebookVideo(link)
-      type = "Facebook"
-    } else if (link.includes('instagram.com')) {
-      videoUrl = await getInstagramVideo(link)
-      type = "Instagram"
-    } else if (link.includes('tiktok.com')) {
-      videoUrl = await getTikTokVideo(link)
-      type = "TikTok"
-    } else {
-      throw '*[ ❌ ] El enlace no es compatible. Soporta: FB, IG y TikTok.*'
+      if (type === "Facebook") videoUrl = await getFacebookVideo(link)
+      else videoUrl = await getInstagramVideo(link)
+
+      if (!videoUrl) throw `*[ ❌ ] No se pudo obtener el video de ${type}.*`
+      await conn.sendFile(m.chat, videoUrl, 'video.mp4', `✅ *Video de ${type} descargado con éxito*`, m)
+    } catch (e) {
+      m.reply(`❌ *Error:* ${e.message || e}`)
     }
+    return
+  }
 
-    if (!videoUrl) throw `*[ ❌ ] No se pudo obtener el video de ${type}. Intenta con otro enlace.*`
+  // 2. LÓGICA DE TIKTOK (ENLACE O BÚSQUEDA)
+  if (!isUrl || link.includes('tiktok.com')) {
+    await m.reply('*[⏳] Buscando/Procesando en TikTok...*')
+    try {
+      // Definimos la URL de la API (Asegúrate de tener estas variables definidas o cámbiadas por tus valores reales)
+      // Usaré placeholders basados en tu código
+      const baseURL = "https://api.vreden.my.id" // Ejemplo de base
+      const apiKey = "Tu_Key_Aqui" 
+      
+      let apiUrl = isUrl 
+        ? `${baseURL}/dl/tiktok?url=${link}&key=${apiKey}`
+        : `${baseURL}/search/tiktok?query=${encodeURIComponent(args.join(" "))}&key=${apiKey}`
 
-    await conn.sendFile(m.chat, videoUrl, 'video.mp4', `✅ *Video de ${type} descargado con éxito*`, m)
+      const res = await fetch(apiUrl)
+      const json = await res.json()
+      const data = isUrl ? json.data : json.data?.[0]
 
-  } catch (e) {
-    console.error(e)
-    m.reply(`❌ *Error:* ${e.message || e}`)
+      if (!data) throw '🍒 No se encontraron resultados.'
+
+      const { title, dl, duration, author, stats, music } = data
+      const caption = `ㅤ۟∩　ׅ　★ ໌　ׅ　🅣𝗂𝗄𝖳𝗈𝗄 🅓ownload　ׄᰙ
+
+𖣣ֶㅤ֯⌗ 🌽 *Título:* ${title || 'Sin título'}
+𖣣ֶㅤ֯⌗ 🍒 *Autor:* ${author?.nickname || 'Desconocido'}
+𖣣ֶㅤ֯⌗ 🍓 *Duración:* ${duration || 'N/A'}
+𖣣ֶㅤ֯⌗ 🦩 *Likes:* ${(stats?.likes || 0).toLocaleString()}
+𖣣ֶㅤ֯⌗ 🌾 *Vistas:* ${(stats?.views || 0).toLocaleString()}
+𖣣ֶㅤ֯⌗ 🪶 *Audio:* ${music?.title || 'Original'}`.trim()
+
+      const head = await fetch(dl, { method: 'HEAD' })
+      if (head.headers.get('content-type').includes('video')) {
+        await conn.sendMessage(m.chat, { video: { url: dl }, caption }, { quoted: m })
+      } else {
+        throw 'El contenido no es un video compatible.'
+      }
+    } catch (e) {
+      m.reply(`❌ *Error en TikTok:* ${e.message || 'Servidor no disponible'}`)
+    }
   }
 }
 
-/** * LÓGICA DE EXTRACCIÓN (APIs DE RESPALDO)
+/** * FUNCIONES DE APOYO (APIs DE RESPALDO)
  */
-
 async function getFacebookVideo(link) {
-  const encoded = encodeURIComponent(link)
   const apis = [
-    `https://eliasar-yt-api.vercel.app/api/facebookdl?link=${encoded}`,
-    `https://api.botcahx.eu.org/api/dowloader/fbdown?url=${encoded}&apikey=BrunoSobrino`,
-    `https://api.vreden.my.id/api/facebook?url=${encoded}`
+    `https://api.botcahx.eu.org/api/dowloader/fbdown?url=${encodeURIComponent(link)}&apikey=BrunoSobrino`,
+    `https://eliasar-yt-api.vercel.app/api/facebookdl?link=${encodeURIComponent(link)}`
   ]
   return await tryApis(apis)
 }
 
 async function getInstagramVideo(link) {
-  const encoded = encodeURIComponent(link)
   const apis = [
-    `https://api.botcahx.eu.org/api/dowloader/igdl?url=${encoded}&apikey=BrunoSobrino`,
-    `https://api.vreden.my.id/api/instagram?url=${encoded}`
+    `https://api.botcahx.eu.org/api/dowloader/igdl?url=${encodeURIComponent(link)}&apikey=BrunoSobrino`,
+    `https://api.vreden.my.id/api/instagram?url=${encodeURIComponent(link)}`
   ]
   return await tryApis(apis)
 }
 
-async function getTikTokVideo(link) {
-  const encoded = encodeURIComponent(link)
-  const apis = [
-    `https://api.botcahx.eu.org/api/dowloader/tiktok?url=${encoded}&apikey=BrunoSobrino`,
-    `https://api.vreden.my.id/api/tiktok?url=${encoded}`
-  ]
-  return await tryApis(apis)
-}
-
-/**
- * Función genérica para probar múltiples APIs
- */
 async function tryApis(apis) {
   for (const url of apis) {
     try {
       const res = await fetch(url)
-      if (!res.ok) continue
       const json = await res.json()
-      
-      let result = null
-      // Adaptador universal de respuestas comunes
-      if (json.status && json.data) {
-          result = Array.isArray(json.data) ? json.data[0].url : (json.data.url || json.data.video)
-      } else if (json.result) {
-          result = json.result.video || json.result.url || (Array.isArray(json.result) ? json.result[0].url : null)
-      }
-
-      if (result && result.startsWith('http')) return result
+      let result = json.data?.url || json.result?.url || (Array.isArray(json.result) ? json.result[0].url : null)
+      if (result) return result
     } catch { continue }
   }
   return null
 }
 
-handler.help = ['fb', 'ig', 'tk'].map(v => v + ' <enlace>')
+handler.help = ['fb', 'ig', 'tk'].map(v => v + ' <enlace/búsqueda>')
 handler.tags = ['downloader']
 handler.command = ['fb', 'facebook', 'instagram', 'ig', 'igdl', 'tk', 'tiktok', 'tt']
 
