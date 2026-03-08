@@ -1,72 +1,96 @@
 import axios from "axios";
 import fs from "fs";
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
-// Configuración de Proxy (usando tus datos de Soax)
-const proxyConfig = {
-  protocol: 'http',
-  host: 'proxy.soax.com',
-  port: 9137,
-  auth: {
-    username: '<api_key>:wifi;ca;;;toronto',
-    password: 'tu_password_aqui' // Reemplaza con tu pass de Soax
-  }
+// --- CONFIGURACIÓN DE IDENTIDAD Y RED ---
+// Reemplaza <api_key> con tu llave de Soax y pon tu password si es necesario
+const proxyUrl = "http://<api_key>:wifi;ca;;;toronto@proxy.soax.com:9137";
+const agent = new HttpsProxyAgent(proxyUrl);
+
+const commonHeaders = {
+  'User-Agent': 'Instagram 219.0.0.12.117 Android (31/12; 480dpi; 1080x2202; Google/google; Pixel 6; oriole; s5e8825; en_US; 340052329)',
+  'X-IG-Capabilities': '3brTvw==',
+  'X-IG-App-ID': '124024574287414',
+  'Accept-Language': 'en-US,en;q=0.9',
 };
 
-const handler = async (m, { conn, args, usedPrefix, command }) => {
-  if (!args[0]) throw `*⚠️ Ingrese un enlace de Instagram*\nEjemplo: ${usedPrefix + command} https://www.instagram.com/p/C12345/`;
+const handler = async (m, { conn, args, command, usedPrefix }) => {
+  if (!args[0]) throw `*⚠️ Ingrese un enlace de Instagram*\nEjemplo: _${usedPrefix + command} https://www.instagram.com/reel/C12345/_`;
 
-  await m.reply('⏳ *Procesando solicitud...*');
+  await m.reply('⏳ *Descargando contenido...*');
 
   try {
-    // MÉTODO 1: Scraper Interno con Proxy
-    const data = await fetchWithProxy(args[0]);
-    await sendMedia(conn, m, data);
+    // MÉTODO 1: API Interna de Instagram con Proxy Soax
+    const mediaData = await instagramDownload(args[0]);
+    if (!mediaData || mediaData.length === 0) throw new Error("No media found");
+
+    for (const item of mediaData) {
+      await conn.sendMessage(m.chat, { [item.type]: { url: item.url } }, { quoted: m });
+    }
 
   } catch (err) {
     try {
-      // MÉTODO 2: Fallback a HikerAPI (Alta fiabilidad)
-      const hikerData = await fetchHikerApi(args[0]);
-      await sendMedia(conn, m, hikerData);
+      // MÉTODO 2: Fallback a HikerAPI (Rescate de alta fiabilidad)
+      const res = await axios.get(`https://hikerapi.com/v1/post/decode`, {
+        params: { url: args[0] },
+        headers: { 'x-access-key': 'TU_HIKER_API_KEY' } // Pon tu Key de HikerAPI aquí
+      });
+      
+      const result = res.data; 
+      for (const item of result) {
+        const type = item.type === "image" ? "image" : "video";
+        await conn.sendMessage(m.chat, { [type]: { url: item.url } }, { quoted: m });
+      }
     } catch (e) {
-      throw `❌ Error crítico: No se pudo obtener el contenido. Los servidores de Instagram están bloqueando la petición.`;
+      throw `❌ *Error Crítico:* Los servidores de Instagram detectaron actividad inusual. Intenta más tarde o verifica tus credenciales de Proxy/API.`;
     }
   }
 };
 
-handler.command = /^(instagram|igdl|ig|insta)$/i;
+handler.command = /^(instagramdl|instagram|igdl|ig|insta)$/i;
 export default handler;
 
-// --- Funciones de Apoyo ---
+// --- FUNCIONES INTERNAS ---
 
-async function fetchWithProxy(url) {
-  // Aquí usamos el endpoint de la API interna que mencionaste
-  const endpoint = `https://i.instagram.com/api/v1/media/id_from_url/?shortcode=${extractShortcode(url)}`;
-  
-  const response = await axios.get(endpoint, {
-    proxy: proxyConfig,
-    headers: {
-      'User-Agent': 'Instagram 219.0.0.12.117 Android',
-      'X-IG-Capabilities': '3brTvw==',
-      'Accept-Language': 'en-US'
+async function instagramDownload(url) {
+  const shortcode = extractShortcode(url);
+  if (!shortcode) return null;
+
+  try {
+    // Sincronización previa (qe/sync) para validar la sesión ante IG
+    await axios.get('https://i.instagram.com/api/v1/qe/sync/', { 
+      httpsAgent: agent, 
+      headers: commonHeaders 
+    });
+
+    // Petición de información del post
+    const response = await axios.get(`https://i.instagram.com/api/v1/media/${shortcode}/info/`, {
+      httpsAgent: agent,
+      headers: {
+        ...commonHeaders,
+        'X-IG-Device-ID': `android-${(Math.random() * 1e18).toString(16)}`
+      }
+    });
+
+    const items = response.data.items[0];
+    let results = [];
+
+    if (items.carousel_media) {
+      results = items.carousel_media.map(m => ({
+        type: m.media_type === 1 ? 'image' : 'video',
+        url: m.media_type === 1 ? m.image_versions2.candidates[0].url : m.video_versions[0].url
+      }));
+    } else {
+      results.push({
+        type: items.media_type === 1 ? 'image' : 'video',
+        url: items.media_type === 1 ? items.image_versions2.candidates[0].url : items.video_versions[0].url
+      });
     }
-  });
-  // Lógica de parseo del JSON interno...
-  return response.data; 
-}
 
-async function fetchHikerApi(url) {
-  const API_KEY = "TU_HIKER_API_KEY";
-  const res = await axios.get(`https://hikerapi.com/v1/post/decode`, {
-    params: { url: url },
-    headers: { 'x-access-key': API_KEY }
-  });
-  return res.data; // Retorna array de media
-}
-
-async function sendMedia(conn, m, items) {
-  for (const item of items) {
-    const type = item.type === "image" ? "image" : "video";
-    await conn.sendMessage(m.chat, { [type]: { url: item.url } }, { quoted: m });
+    return results;
+  } catch (e) {
+    console.error("Error en Proxy Method:", e.message);
+    return null;
   }
 }
 
