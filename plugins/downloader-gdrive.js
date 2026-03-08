@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { pipeline } from 'stream/promises';
+import { Transform } from 'stream'; 
 
 const formatSize = sizeFormatter({
   std: 'JEDEC', 
@@ -22,51 +23,112 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
     throw `${tradutor.texto1} _${usedPrefix + command} https://drive.google.com/file/d/1dmHlx1WTbH5yZoNa_ln325q5dxLn1QHU/view_`;
   }
 
-  let tempFilePath; // Declaramos la variable aquí para poder borrar el archivo en el bloque catch si algo falla
+  let tempFilePath;
 
   try {
-    // 1. Obtener metadatos y link directo
     conn.reply(m.chat, tradutor.texto2 || '🔄 Obteniendo enlace de descarga...', m);
     const res = await GDriveDl(args[0]);
     
     if (!res) throw 'No se pudo obtener el enlace de Google Drive.';
 
-    // Límite de 100 MB = 104857600 bytes
-    if (res.sizeBytes > 104857600) { 
-        throw `El archivo es demasiado grande para enviarlo por WhatsApp (${res.fileSize}). El límite es de 100MB.`;
+    // 🟢 NUEVO LÍMITE: 2 GB = 2147483648 bytes
+    if (res.sizeBytes > 2147483648) { 
+        throw `El archivo es demasiado grande para enviarlo por WhatsApp (${res.fileSize}). El límite máximo es de 2GB.`;
     }
 
-    // 2. PROCESO DE DESCARGA (Al servidor del bot)
-    // conn.reply(m.chat, `📥 Descargando *${res.fileName}* al servidor...`, m); // Opcional: Avisar que empezó la descarga
     const fileResponse = await fetch(res.downloadUrl);
     if (!fileResponse.ok) throw `Error al descargar el archivo: ${fileResponse.statusText}`;
 
-    // Crear ruta temporal segura usando la carpeta temporal del sistema operativo
     tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${res.fileName}`);
+    const totalBytes = res.sizeBytes;
     
-    // Usamos pipeline para guardar el archivo en el disco sin saturar la RAM
-    await pipeline(fileResponse.body, fs.createWriteStream(tempFilePath));
+    // ==========================================
+    // 1. MONITOR DE DESCARGA (Drive -> Servidor)
+    // ==========================================
+    let downloadedBytes = 0;
+    const downloadStartTime = Date.now();
+    let lastDownloadLogTime = 0;
 
-    // 3. PROCESO DE SUBIDA (A WhatsApp)
-    // conn.reply(m.chat, '📤 Subiendo archivo a WhatsApp...', m); // Opcional: Avisar que empezó la subida
+    const downloadProgressStream = new Transform({
+      transform(chunk, encoding, callback) {
+        downloadedBytes += chunk.length;
+        const currentTime = Date.now();
+        
+        if (currentTime - lastDownloadLogTime > 500) {
+           const elapsedTime = (currentTime - downloadStartTime) / 1000;
+           const speedBytes = elapsedTime > 0 ? downloadedBytes / elapsedTime : 0;
+           
+           const percent = ((downloadedBytes / totalBytes) * 100).toFixed(1);
+           const speedMBps = (speedBytes / (1024 * 1024)).toFixed(2);
+           const downloadedMB = (downloadedBytes / (1024 * 1024)).toFixed(2);
+           const totalMB = (totalBytes / (1024 * 1024)).toFixed(2);
+           
+           process.stdout.write(`\r📥 [GDRIVE] Descargando: ${percent}% | ${downloadedMB} MB / ${totalMB} MB | Vel: ${speedMBps} MB/s`);
+           lastDownloadLogTime = currentTime;
+        }
+        callback(null, chunk);
+      }
+    });
+
+    console.log(`\nIniciando proceso para: ${res.fileName}`);
     
-    // Se utiliza sendMessage enviando la ruta del archivo local
+    await pipeline(
+        fileResponse.body, 
+        downloadProgressStream, 
+        fs.createWriteStream(tempFilePath)
+    );
+
+    console.log(`\r📥 [GDRIVE] Descargando: 100.0% | Completado.                 `);
+    console.log(`✅ Archivo guardado temporalmente. Iniciando subida a WhatsApp...`);
+
+    // ==========================================
+    // 2. MONITOR DE SUBIDA (Servidor -> WhatsApp)
+    // ==========================================
+    let uploadedBytes = 0;
+    const uploadStartTime = Date.now();
+    let lastUploadLogTime = 0;
+
+    const uploadProgressStream = new Transform({
+      transform(chunk, encoding, callback) {
+        uploadedBytes += chunk.length;
+        const currentTime = Date.now();
+
+        if (currentTime - lastUploadLogTime > 500) {
+           const elapsedTime = (currentTime - uploadStartTime) / 1000;
+           const speedBytes = elapsedTime > 0 ? uploadedBytes / elapsedTime : 0;
+
+           const percent = ((uploadedBytes / totalBytes) * 100).toFixed(1);
+           const speedMBps = (speedBytes / (1024 * 1024)).toFixed(2);
+           const uploadedMB = (uploadedBytes / (1024 * 1024)).toFixed(2);
+           const totalMB = (totalBytes / (1024 * 1024)).toFixed(2);
+
+           process.stdout.write(`\r📤 [WHATSAPP] Subiendo: ${percent}% | ${uploadedMB} MB / ${totalMB} MB | Vel: ${speedMBps} MB/s`);
+           lastUploadLogTime = currentTime;
+        }
+        callback(null, chunk);
+      }
+    });
+
+    const readStream = fs.createReadStream(tempFilePath).pipe(uploadProgressStream);
+
     await conn.sendMessage(m.chat, {
-        document: { url: tempFilePath }, // WhatsApp leerá el archivo desde esta ruta local
+        document: { stream: readStream }, 
         fileName: res.fileName,
         mimetype: res.mimetype
     }, { quoted: m });
 
-    // 4. LIMPIEZA (Borrar el archivo temporal)
+    console.log(`\r📤 [WHATSAPP] Subiendo: 100.0% | Completado.                 `);
+    console.log(`🚀 Enviado con éxito a ${m.sender}\n`);
+
+    // Limpieza
     if (fs.existsSync(tempFilePath)) {
         fs.unlinkSync(tempFilePath);
     }
 
   } catch (e) {
     m.reply(typeof e === 'string' ? e : tradutor.texto3);
-    console.error('[ERROR DEL PLUGIN GDRIVE]:', e);
+    console.error('\n[ERROR DEL PLUGIN GDRIVE]:', e);
     
-    // Limpieza de emergencia en caso de error a mitad del proceso
     if (tempFilePath && fs.existsSync(tempFilePath)) {
         fs.unlinkSync(tempFilePath);
     }
@@ -76,7 +138,6 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
 handler.command = /^(gdrive)$/i;
 export default handler;
 
-// La función GDriveDl permanece igual a la versión refactorizada anterior
 async function GDriveDl(url) {
   if (!(url && url.match(/drive\.google/i))) throw 'URL no válida';
   
@@ -103,7 +164,7 @@ async function GDriveDl(url) {
   
   if (!downloadUrl) throw '¡Límite de descarga alcanzado o el archivo es privado!';
   
-  const data = await fetch(downloadUrl); // Solo para obtener los headers (mimetype)
+  const data = await fetch(downloadUrl);
   if (data.status !== 200) throw `Error HTTP: ${data.statusText}`;
 
   return { 
