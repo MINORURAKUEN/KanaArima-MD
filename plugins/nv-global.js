@@ -1,10 +1,12 @@
 import fs from 'fs';
-import { sticker } from '../src/libraries/sticker.js';
-import { toPTT } from '../src/libraries/converter.js'; // Tu conversor de notas de voz
+import { toPTT } from '../src/libraries/converter.js';
 
 const handler = (m) => m;
 
 handler.all = async function(m, { conn }) {
+  // 🛠️ CORRECCIÓN: Algunos bots usan 'this' en lugar de 'conn' en comandos globales
+  const client = conn || this; 
+  
   const datas = global;
   const idioma = datas.db.data.users[m.sender]?.language || global.defaultLenguaje;
   const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
@@ -12,7 +14,6 @@ handler.all = async function(m, { conn }) {
 
   const chat = global.db.data.chats[m.chat] || {};
 
-  // Función para verificar si es el bot principal
   const checkPrimaryBot = () => {
     if (!chat.setPrimaryBot) return true;
     const normalizeJid = (jid) => jid?.replace(/[^0-9]/g, '') + '@s.whatsapp.net';
@@ -27,13 +28,12 @@ handler.all = async function(m, { conn }) {
     return true; 
   };
 
-  // Función mágica que convierte y envía la nota de voz PTT real
   const enviarNotaDeVoz = async (rutaMp3) => {
     try {
-      await conn.sendPresenceUpdate('recording', m.chat);
+      await client.sendPresenceUpdate('recording', m.chat);
       const audioBuffer = fs.readFileSync(rutaMp3);
       const pttConvertido = await toPTT(audioBuffer, 'mp3');
-      await conn.sendMessage(m.chat, { 
+      await client.sendMessage(m.chat, { 
         audio: pttConvertido.data, 
         mimetype: 'audio/ogg; codecs=opus', 
         ptt: true 
@@ -43,10 +43,9 @@ handler.all = async function(m, { conn }) {
     }
   };
 
-  // Mensaje de invitación a grupo (dejamos este bloque tal cual)
   if ((m.mtype === 'groupInviteMessage' || m.text.startsWith('https://chat') || m.text.startsWith('Abre este enlace')) && !m.isBaileys && !m.isGroup && !chat.isBanned && !m.fromMe && checkPrimaryBot()) {
     const join = `${tradutor.texto1[0]} @${m.sender.split('@')[0]}, ${tradutor.texto1[1]} https://chat.whatsapp.com/LjJbmdO0qSDEKgB60qivZj`.trim();
-    await conn.sendMessage(m.chat, {
+    await client.sendMessage(m.chat, {
       text: join.trim(), 
       mentions: [...join.matchAll(/@([0-9]{5,16}|0)/g)].map((v) => v[1] + '@s.whatsapp.net'), 
       contextInfo: {
@@ -63,19 +62,21 @@ handler.all = async function(m, { conn }) {
     }, { quoted: m });
   }
 
-  // Comprobaciones de seguridad para evitar que el bot explote
   const canSendAudio = () => {
     if (chat.isBanned || !checkPrimaryBot()) return false;
     if (!global.db.data.chats[m.chat]?.audios) return false;
-    const botSettings = global.db.data.settings[conn.user?.jid] || {};
-    if (!botSettings.audios_bot && !m.isGroup) return false;
+    
+    // 🛠️ CORRECCIÓN: Leemos de client.user.jid sin que explote
+    const botJid = client?.user?.jid;
+    if (botJid) {
+      const botSettings = global.db.data.settings[botJid] || {};
+      if (!botSettings.audios_bot && !m.isGroup) return false;
+    }
     return true;
   };
 
-  // Si el mensaje no tiene texto, detenemos aquí
   if (!m.text) return !0;
 
-  // 🎵 LISTA INTELIGENTE DE AUDIOS 🎵 (Limpio y sin errores de llaves)
   const audioList = [
     { regex: /^hola$/i, file: '01J673CQ9ZE93TRQKCKN9Q8Z0M.mp3' },
     { regex: /^que no$/i, file: '01J6745EH5251SV6HT327JJW9G.mp3' },
@@ -121,7 +122,6 @@ handler.all = async function(m, { conn }) {
     { regex: /(no digas eso papu)/gi, file: '01J67413BMA69VV48TWPCVCYS8.mp3' }
   ];
 
-  // Recorremos la lista. Si el mensaje coincide, manda el audio y listo.
   if (canSendAudio()) {
     for (const audio of audioList) {
       if (audio.regex.test(m.text)) {
@@ -135,3 +135,4 @@ handler.all = async function(m, { conn }) {
 };
 
 export default handler;
+  
