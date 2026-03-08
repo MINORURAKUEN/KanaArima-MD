@@ -10,19 +10,23 @@ const handler = async (m, { conn, usedPrefix, command }) => {
     const q = m.quoted ? m.quoted : m
     const mime = (q.msg || q).mimetype || q.mediaType || ""
 
+    // 1. Validaciones
     if (!mime) throw `${tradutor.texto1} ${usedPrefix + command}*`
     if (!/image\/(jpe?g|png)/.test(mime)) throw `${tradutor.texto2[0]} (${mime}) ${tradutor.texto2[1]}`
 
     await m.reply(tradutor.texto3) // "Procesando..."
 
+    // 2. Descargamos la imagen de WhatsApp
     const img = await q.download()
-    const fileUrl = await uploadImage(img)
     
-    if (!fileUrl) throw "Error al subir la imagen al servidor temporal."
+    // 3. Subimos la imagen usando tu NUEVO uploadImage.js (Telegra.ph/Pomf2)
+    const fileUrl = await uploadImage(img)
+    if (!fileUrl) throw "Error al subir la imagen a la nube temporal. Intenta de nuevo."
 
-    // Llamamos a nuestra función blindada con bypass Anti-Bots
+    // 4. Pasamos la URL limpia por el sistema Anti-Caídas de 4 APIs
     const enhancedImage = await upscaleWithFreeAPI(fileUrl)
 
+    // 5. Enviamos el resultado final
     await conn.sendMessage(m.chat, { 
         image: enhancedImage, 
         caption: "✨ Mejora HD completada con éxito" 
@@ -34,18 +38,21 @@ const handler = async (m, { conn, usedPrefix, command }) => {
   }
 }
 
+// Configuración del comando
 handler.help = ["remini", "hd", "enhance"]
 handler.tags = ["ai", "tools"]
-// ✅ CORRECCIÓN APLICADA: Usando Expresión Regular (Regex) para que el bot detecte el comando
+// ✅ Regex para que el bot escuche correctamente los comandos
 handler.command = /^(remini|hd|enhance)$/i
 
 export default handler
 
-// ✅ Función unificada con Evasión Anti-Bots (Bypass Cloudflare) y APIs actualizadas
+// ==========================================
+// 🛡️ FUNCIÓN ANTI-CAÍDAS CON BYPASS
+// ==========================================
 async function upscaleWithFreeAPI(url) {
   const encodedUrl = encodeURIComponent(url)
   
-  // Lista limpia de APIs activas
+  // APIs actualizadas y funcionando
   const apis = [
     `https://api.siputzx.my.id/api/ai/remini?url=${encodedUrl}`,
     `https://api.dorratz.com/v2/image-upscale?url=${encodedUrl}`,
@@ -55,7 +62,7 @@ async function upscaleWithFreeAPI(url) {
 
   let errores = []
 
-  // 🎭 Headers para engañar a Cloudflare y hacer creer que somos Google Chrome en una PC
+  // Disfrazamos al bot de navegador web (Google Chrome)
   const headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*"
@@ -66,9 +73,8 @@ async function upscaleWithFreeAPI(url) {
     
     try {
       const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 20000) 
+      const timeoutId = setTimeout(() => controller.abort(), 20000) // 20s de límite
 
-      // Enviamos la petición con nuestro "disfraz"
       const response = await fetch(endpoint, { headers, signal: controller.signal })
       clearTimeout(timeoutId)
 
@@ -84,7 +90,7 @@ async function upscaleWithFreeAPI(url) {
           let resultUrl = json.data?.url || json.data || json.url || json.result || json.image
           
           if (!resultUrl || typeof resultUrl !== 'string') {
-              errores.push(`${apiName}: No se encontró link en el JSON`)
+              errores.push(`${apiName}: Sin link en JSON`)
               continue 
           }
           
@@ -103,5 +109,5 @@ async function upscaleWithFreeAPI(url) {
     }
   }
   
-  throw new Error(`\nTodas las APIs fallaron.\nReporte de daños:\n- ${errores.join('\n- ')}\n\n*Nota:* Si todas fallan constantemente, las APIs podrían estar bloqueando enlaces de tu subidor (ej. Catbox).`)
-}
+  throw new Error(`\nTodas las APIs fallaron.\nReporte de daños:\n- ${errores.join('\n- ')}`)
+  }
