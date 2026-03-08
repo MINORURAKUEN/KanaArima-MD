@@ -1,98 +1,118 @@
-import fs from 'fs'
-import fetch from 'node-fetch'
-import yts from 'yt-search'
+import fetch from 'node-fetch';
+import fs from 'fs';
 
-let handler = async (m, { conn, args, text, usedPrefix, command }) => {
-  const datas = global;
-  const idioma = datas.db.data.users[m.sender].language || global.defaultLenguaje;
-  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
-  const tradutor = _translate.plugins.descargas_play
+let enviando = false;
 
-  if (!text) throw `${tradutor.texto1[0]} ${usedPrefix + command} ${tradutor.texto1[1]}`;      
-  let additionalText = '';
-  if (['play'].includes(command)) {
-    additionalText = 'audio';
-  } else if (['play2'].includes(command)) {
-    additionalText = 'vídeo';
-  }
+const handler = async (m, { command, usedPrefix, conn, text }) => {
+    const datas = global;
+    const idioma = datas.db.data.users[m.sender].language || global.defaultLenguaje;
+    const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
+    const tradutor = _translate.plugins.descargas_play;
 
-  const regex = "https://youtube.com/watch?v="
-  const result = await search(args.join(' '))
-  const body = `${tradutor.texto2[0]} ${result.title}\n${tradutor.texto2[1]} ${result.ago}\n${tradutor.texto2[2]} ${result.duration.timestamp}\n${tradutor.texto2[3]} ${formatNumber(result.views)}\n${tradutor.texto2[4]} ${result.author.name}\n${tradutor.texto2[5]} ${result.videoId}\n${tradutor.texto2[6]} ${result.type}\n${tradutor.texto2[7]} ${result.url}\n${tradutor.texto2[8]} ${result.author.url}\n\n${tradutor.texto2[9]} ${additionalText}, ${tradutor.texto2[10]}`.trim();
-  conn.sendMessage(m.chat, { image: { url: result.thumbnail }, caption: body }, { quoted: m });
+    if (!text) throw `✨ *Ingrese el nombre o enlace de YouTube*\n\nEjemplo:\n${usedPrefix + command} Sia Unstoppable`;
+    
+    if (enviando) return;
+    enviando = true;
 
-  if (command === 'play') {
     try {
-      const audiodlp = await tools.downloader.ytmp3(regex + result.videoId);
-      const downloader = audiodlp.download;
-      conn.sendMessage(m.chat, { audio: { url: downloader }, mimetype: "audio/mpeg" }, { quoted: m });
-    } catch (error) {
-      console.log('❌ Error en tools.downloader.ytmp3, intentando Ruby-core fallback...', error);
-      try {
-        const ruby = await (
-          await fetch(
-            `https://ruby-core.vercel.app/api/download/youtube/mp3?url=${encodeURIComponent(regex + result.videoId)}`
-          )
-        ).json();
-        if (ruby?.status && ruby?.download?.url) {
-          const audioLink = ruby.download.url;
-          await conn.sendMessage(
-            m.chat,
-            { audio: { url: audioLink }, mimetype: "audio/mpeg" },
-            { quoted: m }
-          );
-        } else {
-          conn.reply(m.chat, tradutor.texto6, m);
-        }
-      } catch (err2) {
-        console.log('❌ Falla en fallback Ruby-core mp3:', err2);
-        conn.reply(m.chat, tradutor.texto6, m);
-      }
-    }
-  }
+        // --- 1. BUSCAR INFORMACIÓN DEL VIDEO ---
+        let apiUrlsz = [
+            `https://api.cafirexos.com/api/ytplay?text=${encodeURIComponent(text)}`,
+            `https://api-brunosobrino.onrender.com/api/ytplay?text=${encodeURIComponent(text)}&apikey=BrunoSobrino`,
+            `https://api-brunosobrino-dcaf9040.koyeb.app/api/ytplay?text=${encodeURIComponent(text)}`
+        ];
 
-  if (command === 'play2') {
-    try {
-      const videodlp = await tools.downloader.ytmp4(regex + result.videoId);
-      const downloader = videodlp.download;
-      conn.sendMessage(m.chat, { video: { url: downloader }, mimetype: "video/mp4" }, { quoted: m });
-    } catch (error) {
-      console.log('❌ Error en tools.downloader.ytmp4, intentando Ruby-core fallback...', error);
-      try {
-        const ruby = await (
-          await fetch(
-            `https://ruby-core.vercel.app/api/download/youtube/mp4?url=${encodeURIComponent(regex + result.videoId)}`
-          )
-        ).json();
-        if (ruby?.status && ruby?.download?.url) {
-          const videoLink = ruby.download.url;
-          await conn.sendMessage(
-            m.chat,
-            { video: { url: videoLink }, mimetype: "video/mp4" },
-            { quoted: m }
-          );
-        } else {
-          conn.reply(m.chat, tradutor.texto6, m);
+        // Si el texto ya es un link, usamos el endpoint de info directa
+        if (isValidYouTubeLink(text)) {
+            apiUrlsz = [
+                `https://api.cafirexos.com/api/ytinfo?url=${encodeURIComponent(text)}`,
+                `https://api-brunosobrino-koiy.onrender.com/api/ytinfo?url=${encodeURIComponent(text)}&apikey=BrunoSobrino`,
+                `https://api-brunosobrino-dcaf9040.koyeb.app/api/ytinfo?url=${encodeURIComponent(text)}`
+            ];
         }
-      } catch (err2) {
-        console.log('❌ Falla en fallback Ruby-core mp4:', err2);
-        conn.reply(m.chat, tradutor.texto6, m);
-      }
+
+        let data = null;
+        for (const url of apiUrlsz) {
+            try {
+                const res = await fetch(url);
+                data = await res.json();
+                if (data.resultado && data.resultado.url) break;
+            } catch (e) { console.log(`Error en búsqueda: ${url}`); }
+        }
+
+        if (!data || !data.resultado) {
+            enviando = false;
+            throw `❌ No se encontró el video o las APIs están caídas.`;
+        }
+
+        const { title, publicDate, channel, url: videoUrl, image } = data.resultado;
+        const isVideo = command === 'play2'; // play = audio, play2 = video
+
+        const caption = `
+🎶 *YouTube Descargas*
+📌 *Título:* ${title}
+🗓️ *Publicado:* ${publicDate || 'Desconocido'}
+👤 *Canal:* ${channel}
+🔗 *Link:* ${videoUrl}
+
+_Enviando ${isVideo ? 'video' : 'audio'}..._`.trim();
+
+        await conn.sendMessage(m.chat, { image: { url: image }, caption }, { quoted: m });
+
+        // --- 2. DESCARGAR EL ARCHIVO ---
+        let apiDownloadUrls = [];
+        if (isVideo) {
+            apiDownloadUrls = [
+                `https://api.cafirexos.com/api/v1/ytmp4?url=${videoUrl}`,
+                `https://api.cafirexos.com/api/v2/ytmp4?url=${videoUrl}`,
+                `https://api-brunosobrino.onrender.com/api/v1/ytmp4?url=${videoUrl}&apikey=BrunoSobrino`,
+                `https://api-brunosobrino-dcaf9040.koyeb.app/api/v1/ytmp4?url=${videoUrl}`
+            ];
+        } else {
+            apiDownloadUrls = [
+                `https://api.cafirexos.com/api/v1/ytmp3?url=${videoUrl}`,
+                `https://api.cafirexos.com/api/v2/ytmp3?url=${videoUrl}`,
+                `https://api-brunosobrino.onrender.com/api/v1/ytmp3?url=${videoUrl}&apikey=BrunoSobrino`,
+                `https://api-brunosobrino-dcaf9040.koyeb.app/api/v1/ytmp3?url=${videoUrl}`
+            ];
+        }
+
+        let buff = null;
+        let mimeType = isVideo ? 'video/mp4' : 'audio/mpeg';
+
+        for (const dlUrl of apiDownloadUrls) {
+            try {
+                // Usamos getFile para manejar la descarga del buffer
+                const resDl = await conn.getFile(dlUrl);
+                if (resDl && resDl.data) {
+                    buff = resDl.data;
+                    break;
+                }
+            } catch (e) { console.log(`Error en descarga: ${dlUrl}`); }
+        }
+
+        if (buff) {
+            await conn.sendMessage(m.chat, { 
+                [isVideo ? 'video' : 'audio']: buff, 
+                mimetype: mimeType, 
+                fileName: `${title}.${isVideo ? 'mp4' : 'mp3'}` 
+            }, { quoted: m });
+        } else {
+            throw `❌ Todas las APIs de descarga fallaron.`;
+        }
+
+    } catch (error) {
+        console.log(error);
+        m.reply(`⚠️ Error: ${error.message || error}`);
+    } finally {
+        enviando = false;
     }
-  }
 };
 
-handler.help = ['play', 'play2'];
-handler.tags = ['downloader'];
-//handler.command = ['play', 'play2'];
-
+handler.command = /^(play|play2)$/i;
 export default handler;
 
-async function search(query, options = {}) {
-  const searchRes = await yts.search({ query, hl: 'es', gl: 'ES', ...options });
-  return searchRes.videos[0];
-}
-
-function formatNumber(num) {
-  return num.toLocaleString();
+function isValidYouTubeLink(link) {
+    const validPatterns = [/youtube\.com\/watch\?v=/i, /youtube\.com\/shorts\//i, /youtu\.be\//i, /youtube\.com\/embed\//i, /youtube\.com\/v\//i, /yt\.be\//i];
+    return validPatterns.some(pattern => pattern.test(link));
 }
