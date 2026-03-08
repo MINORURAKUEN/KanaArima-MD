@@ -1,88 +1,110 @@
-import fetch from 'node-fetch'
+import axios from "axios";
+import fs from "fs"; // Asegúrate de importar fs para leer los lenguajes
 
-let handler = async (m, { args, command, conn, usedPrefix }) => {
-  const text = args[0]
-  
-  if (!text) throw `*¡Hola!* Por favor ingresa un enlace de Instagram.\n\n*Ejemplo:* ${usedPrefix + command} https://www.instagram.com/reel/DBRWEljp0cf/`
+const handler = async (m, { conn, args, command, usedPrefix }) => {
+  const datas = global;
+  const idioma = datas.db.data.users[m.sender].language || global.defaultLenguaje;
+  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
+  const tradutor = _translate.plugins.descargas_instagram;
 
-  if (!/instagram\.com\/(reel|p|tv|reels)/i.test(text)) throw '*❌ Enlace no válido.*'
+  if (!args[0]) {
+    throw `${tradutor.texto1} _${usedPrefix + command} https://www.instagram.com/reel/...`;
+  }
 
-  // Identificación en terminal
-  const userTag = m.pushName || m.sender
-  console.log(`\n[ APIFY-PROCESS ] Solicitud de: ${userTag}`)
-  console.log(`[ TARGET ] ${text}`)
-  
-  await conn.sendMessage(m.chat, { react: { text: '⏱️', key: m.key } })
+  // Reacción inicial de "procesando" (opcional)
+  await conn.sendMessage(m.chat, { react: { text: "⏳", key: m.key } });
 
   try {
-    // 1. Configuración del Payload basado en tu JSON
-    const requestBody = {
-      "audioOnly": false,
-      "ffmpeg": true,
-      "proxy": { "useApifyProxy": true },
-      "urls": [text],
-      "quality": "1080"
+    const img = await instagramDownload(args[0]);
+    
+    if (!img.status) throw new Error("Scraper falló");
+
+    for (let i = 0; i < img.data.length; i++) {
+      const item = img.data[i];
+      if (item.type === "image") {
+        await conn.sendMessage(m.chat, { image: { url: item.url } }, { quoted: m });
+      } else if (item.type === "video") {
+        await conn.sendMessage(m.chat, { video: { url: item.url } }, { quoted: m });
+      }
     }
-
-    // 2. Ejecución del Actor en Apify (Sustituye TU_APIFY_TOKEN)
-    // Usamos el actor 'apify/instagram-scraper' o el que tengas configurado
-    console.log(`[ TERMINAL ] Enviando tarea a Apify...`)
     
-    const apiToken = "TU_APIFY_TOKEN_AQUI" // <--- IMPORTANTE: Pon tu Token de Apify aquí
-    const runActor = await fetch(`https://api.apify.com/v2/acts/apify~instagram-scraper/runs?token=${apiToken}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody)
-    })
+    // Reacción de éxito (Check)
+    await conn.sendMessage(m.chat, { react: { text: "✅", key: m.key } });
 
-    const runJson = await runActor.json()
-    const runId = runJson.data.id
-    console.log(`[ TERMINAL ] Tarea iniciada. ID: ${runId}`)
+  } catch (err) {
+    try {
+      const res = await axios.get(global.BASE_API_DELIRIUS + "/download/instagram", { params: { url: args[0] }});
+      const result = res.data.data;
+      
+      for (let i = 0; i < result.length; i++) {
+        const item = result[i];
+        if (item.type === "image") {
+          await conn.sendMessage(m.chat, { image: { url: item.url } }, { quoted: m });
+        } else if (item.type === "video") {
+          await conn.sendMessage(m.chat, { video: { url: item.url } }, { quoted: m });
+        }
+      }
+      
+      // Reacción de éxito (Check) si funciona el respaldo
+      await conn.sendMessage(m.chat, { react: { text: "✅", key: m.key } });
 
-    // 3. Esperar y obtener el resultado del Key-Value Store
-    // (Simplificado: asumiendo que el actor termina rápido o usando el dataset)
-    // Para fines prácticos, consultamos el registro de salida
-    const recordUrl = `https://api.apify.com/v2/key-value-stores/${runJson.data.defaultKeyValueStoreId}/records/OUTPUT?token=${apiToken}`
-    
-    console.log(`[ TERMINAL ] Esperando respuesta del almacén...`)
-    
-    // Pequeña pausa para que el scraper procese
-    await new Promise(resolve => setTimeout(resolve, 5000))
-
-    const response = await fetch(recordUrl)
-    const resultData = await response.json()
-
-    // 4. Extraer URL del video
-    // Estructura típica de salida de Apify Instagram Scraper
-    const videoUrl = resultData[0]?.videoUrl || resultData[0]?.displayUrl || resultData[0]?.url
-
-    if (!videoUrl) {
-      console.log(`[ ERROR ] No se encontró videoUrl en la respuesta final.`)
-      throw 'No se pudo extraer el video de los registros de Apify.'
+    } catch (err2) {
+      // Reacción de error (X) si fallan ambos métodos
+      await conn.sendMessage(m.chat, { react: { text: "❌", key: m.key } });
+      console.error(err2);
     }
-
-    console.log(`[ BUFFER ] Descargando video final...`)
-    const videoBuffer = await (await fetch(videoUrl)).buffer()
-
-    await conn.sendMessage(m.chat, { 
-      video: videoBuffer, 
-      caption: `✅ *INSTAGRAM HD (APIFY)*\n*Fuente:* KanaArima-MD`,
-      mimetype: 'video/mp4'
-    }, { quoted: m })
-
-    console.log(`[ SUCCESS ] Video enviado con audio a ${userTag}\n`)
-    await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
-
-  } catch (e) {
-    console.log(`[ TERMINAL ERROR ] ${e.message}`)
-    await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
-    m.reply(`❌ *Error en el proceso:* Las APIs de Apify podrían estar tardando demasiado o el token es inválido.`);
   }
-}
+};
 
-handler.help = ['ig <url>']
-handler.tags = ['downloader']
-handler.command = /^(instagram|ig)$/i
-handler.limit = false 
+handler.command = /^(instagramdl|instagram|igdl|ig|instagramdl2|instagram2|igdl2|ig2|instagramdl3|instagram3|igdl3|ig3)$/i;
+export default handler;
 
-export default handler
+// Función de delay para no saturar el servidor de Publer
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const instagramDownload = async (url) => {
+  return new Promise(async (resolve) => {
+    if (!url.match(/\/(reel|reels|p|stories|tv|s)\/[a-zA-Z0-9_-]+/i)) {
+      return resolve({ status: false, creator: "Sareth" });
+    }
+
+    try {
+      let response = await axios.post(
+          "https://app.publer.io/hooks/media",
+          { url: url, iphone: false },
+          {
+            headers: {
+              "Content-Type": "application/json",
+              "Origin": "https://publer.io",
+              "Referer": "https://publer.io/",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+            },
+          }
+      );
+
+      let jobId = response.data.job_id;
+      let status = "working";
+      let jobStatusResponse;
+      let attempts = 0;
+
+      while (status !== "complete" && attempts < 10) {
+        await delay(2000); // Espera 2 segundos entre intentos
+        jobStatusResponse = await axios.get(`https://app.publer.io/api/v1/job_status/${jobId}`);
+        status = jobStatusResponse.data.status;
+        attempts++;
+      }
+
+      if (status !== "complete") return resolve({ status: false });
+
+      let data = jobStatusResponse.data.payload.map((item) => ({
+          type: item.type === "photo" ? "image" : "video",
+          url: item.path,
+      }));
+
+      resolve({ status: true, data });
+    } catch (e) {
+      resolve({ status: false, msg: e.message });
+    }
+  });
+};
+                                 
