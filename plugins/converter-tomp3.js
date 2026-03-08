@@ -1,5 +1,5 @@
-import { toAudio } from '../src/libraries/converter.js';
-import fs from 'fs'; // Faltaba esta importación
+import { toMP3 } from '../src/libraries/converter.js';
+import fs from 'fs';
 
 const handler = async (m, { conn, usedPrefix, command }) => {
   const datas = global;
@@ -10,18 +10,20 @@ const handler = async (m, { conn, usedPrefix, command }) => {
   const q = m.quoted ? m.quoted : m;
   const mime = (q || q.msg).mimetype || q.mediaType || '';
   
+  // Verifica que se haya citado un video o un audio
   if (!/video|audio/.test(mime)) throw `*${tradutor.texto1}*`;
   
   const media = await q.download();
   if (!media) throw `*${tradutor.texto2}*`;
   
-  const audio = await toAudio(media, 'mp4');
+  // Convertimos el archivo usando tu nueva función toMP3 real
+  const audio = await toMP3(media, 'mp4');
   if (!audio.data) throw `*${tradutor.texto3}*`;
   
-  // FIX: Cambiamos 'audio/mpeg' por 'audio/mp4' para evitar el error de decodificación en WhatsApp
+  // Enviamos el buffer con el formato audio/mpeg para que se reproduzca como música
   await conn.sendMessage(m.chat, { 
     audio: audio.data, 
-    mimetype: 'audio/mp4' 
+    mimetype: 'audio/mpeg' 
   }, { quoted: m });
 };
 
