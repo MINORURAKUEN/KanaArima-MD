@@ -3,6 +3,7 @@ import {join} from 'path';
 import {spawn} from 'child_process';
 
 function ffmpeg(buffer, args = [], ext = '', ext2 = '') {
+  // ... (deja tu función ffmpeg original intacta) ...
   return new Promise(async (resolve, reject) => {
     try {
       const tmp = join(global.__dirname(import.meta.url), '../tmp', + new Date + '.' + ext);
@@ -36,57 +37,23 @@ function ffmpeg(buffer, args = [], ext = '', ext2 = '') {
   });
 }
 
-/**
- * Convert Audio to Playable WhatsApp Audio
- * @param {Buffer} buffer Audio Buffer
- * @param {String} ext File Extension
- * @return {Promise<{data: Buffer, filename: String, delete: Function}>}
- */
-function toPTT(buffer, ext) {
-  return ffmpeg(buffer, [
-    '-vn',
-    '-c:a', 'libopus',
-    '-b:a', '128k',
-    '-vbr', 'on',
-  ], ext, 'ogg');
-}
+// ... (deja toPTT, toAudio y toVideo intactas) ...
 
 /**
- * Convert Audio to Playable WhatsApp PTT
- * @param {Buffer} buffer Audio Buffer
- * @param {String} ext File Extension
- * @return {Promise<{data: Buffer, filename: String, delete: Function}>}
+ * Convertir a formato MP3 real
  */
-function toAudio(buffer, ext) {
+function toMP3(buffer, ext) {
   return ffmpeg(buffer, [
     '-vn',
-    '-c:a', 'libopus',
+    '-c:a', 'libmp3lame',
     '-b:a', '128k',
-    '-vbr', 'on',
-    '-compression_level', '10',
-  ], ext, 'opus');
-}
-
-/**
- * Convert Audio to Playable WhatsApp Video
- * @param {Buffer} buffer Video Buffer
- * @param {String} ext File Extension
- * @return {Promise<{data: Buffer, filename: String, delete: Function}>}
- */
-function toVideo(buffer, ext) {
-  return ffmpeg(buffer, [
-    '-c:v', 'libx264',
-    '-c:a', 'aac',
-    '-ab', '128k',
-    '-ar', '44100',
-    '-crf', '32',
-    '-preset', 'slow',
-  ], ext, 'mp4');
+  ], ext, 'mp3');
 }
 
 export {
   toAudio,
   toPTT,
   toVideo,
+  toMP3, // <-- Asegúrate de exportar la nueva función aquí
   ffmpeg,
 };
