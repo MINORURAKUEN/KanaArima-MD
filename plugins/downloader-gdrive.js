@@ -63,12 +63,12 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
            const downloadedMB = (downloadedBytes / (1024 * 1024)).toFixed(1);
            const totalMB = (totalBytes / (1024 * 1024)).toFixed(1);
            
-           // Limpia la línea en terminales compatibles y acorta el texto
+           // Limpia la línea en terminales compatibles y usa texto corto
            if (process.stdout.isTTY) {
                process.stdout.clearLine(0);
                process.stdout.cursorTo(0);
            }
-           process.stdout.write(`\r📥 DL: ${percent}% | ${downloadedMB}/${totalMB}MB | Vel: ${speedMBps}MB/s`);
+           process.stdout.write(`\r📥 ${percent}% | ${downloadedMB}/${totalMB}MB | ${speedMBps}MB/s`);
            lastDownloadLogTime = currentTime;
         }
         callback(null, chunk);
@@ -106,12 +106,12 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
            const uploadedMB = (uploadedBytes / (1024 * 1024)).toFixed(1);
            const totalMB = (totalBytes / (1024 * 1024)).toFixed(1);
 
-           // Limpia la línea en terminales compatibles y acorta el texto
+           // Limpia la línea en terminales compatibles y usa texto corto
            if (process.stdout.isTTY) {
                process.stdout.clearLine(0);
                process.stdout.cursorTo(0);
            }
-           process.stdout.write(`\r📤 UP: ${percent}% | ${uploadedMB}/${totalMB}MB | Vel: ${speedMBps}MB/s`);
+           process.stdout.write(`\r📤 ${percent}% | ${uploadedMB}/${totalMB}MB | ${speedMBps}MB/s`);
            lastUploadLogTime = currentTime;
         }
         callback(null, chunk);
@@ -120,28 +120,10 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
 
     const readStream = fs.createReadStream(tempFilePath).pipe(uploadProgressStream);
 
-    // Calcular velocidad promedio para mostrar en el mensaje
-    const totalTimeUpload = (Date.now() - uploadStartTime) / 1000;
-    const avgSpeedMBps = ((totalBytes / totalTimeUpload) / (1024 * 1024)).toFixed(1);
-    
-    // Formatear el formato del archivo para que se lea mejor (ej: application/pdf -> pdf)
-    const formatoArchivo = res.mimetype.split('/')[1]?.toUpperCase() || 'DESCONOCIDO';
-
-    // 🎨 MENSAJE CON EMOJIS Y FORMATO
-    const infoCaption = `*╭━━〔 ✦ DESCARGA DRIVE 📥 ✦ 〕━━╮*
-
-  📄 *Nombre:* ${res.fileName}
-  ⚖️ *Peso:* ${res.fileSize}
-  🗂️ *Formato:* ${formatoArchivo}
-  ⚡ *Velocidad:* ${avgSpeedMBps} MB/s
-
-*╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯*`;
-
     await conn.sendMessage(m.chat, {
         document: { stream: readStream }, 
         fileName: res.fileName,
-        mimetype: res.mimetype,
-        caption: infoCaption
+        mimetype: res.mimetype
     }, { quoted: m });
 
     console.log(`\n🚀 Subida completada. Enviado con éxito a ${m.sender}\n`);
@@ -200,4 +182,4 @@ async function GDriveDl(url) {
     fileSize: formatSize(sizeBytes), 
     mimetype: data.headers.get('content-type') 
   };
-    }
+}
