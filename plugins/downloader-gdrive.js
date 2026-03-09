@@ -4,12 +4,12 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { pipeline } from 'stream/promises';
-import { Transform } from 'stream';
+import { Transform } from 'stream'; 
 
 const formatSize = sizeFormatter({
-  std: 'JEDEC',
-  decimalPlaces: 2,
-  keepTrailingZeroes: false,
+  std: 'JEDEC', 
+  decimalPlaces: 2, 
+  keepTrailingZeroes: false, 
   render: (literal, symbol) => `${literal} ${symbol}B`
 });
 
@@ -20,138 +20,184 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
   const tradutor = _translate.plugins.descargas_gdrive;
 
   if (!args[0]) {
-    throw `*¡Uso de Google Drive!* 💡\n\n*Archivo Individual:* \n_${usedPrefix + command} [link]_\n\n*Seleccionar de Carpeta (1 al 24):* \n_${usedPrefix + command} [link-carpeta] [número]_`;
+    throw `${tradutor.texto1} _${usedPrefix + command} https://drive.google.com/file/d/1dmHlx1WTbH5yZoNa_ln325q5dxLn1QHU/view_`;
   }
 
-  const link = args[0];
-  const indexSelected = parseInt(args[1]);
-  const isFolder = link.includes('/folders/') || link.includes('id=') || link.includes('/drive/mobile/folders/');
+  let tempFilePath;
 
   try {
-    if (isFolder) {
-      const folderId = link.match(/\/folders\/(.{15,40})/)?.[1] || link.match(/id=(.{15,40})/)?.[1];
-      if (!folderId) throw 'No se pudo extraer el ID de la carpeta.';
-      
-      const files = await GDriveFolderList(folderId);
-      if (!files || files.length === 0) throw 'No se encontraron archivos. Asegúrate de que la carpeta sea *Pública*.';
+    conn.reply(m.chat, tradutor.texto2 || '🔄 Obteniendo enlace de descarga...', m);
+    const res = await GDriveDl(args[0]);
+    
+    if (!res) throw 'No se pudo obtener el enlace de Google Drive.';
 
-      // Si no ha seleccionado un número, mostrar la lista
-      if (isNaN(indexSelected)) {
-        let menu = `📂 *CONTENIDO DE LA CARPETA*\n\n`;
-        files.forEach((file, i) => {
-          menu += `*${i + 1}.* 📄 ${file.name}\n`;
-        });
-        menu += `\n*Para descargar uno, escribe:* \n_${usedPrefix + command} ${link} [número]_`;
-        return m.reply(menu);
-      }
-
-      const fileIndex = indexSelected - 1;
-      if (!files[fileIndex]) throw `El número *${indexSelected}* no es válido. Elige entre 1 y ${files.length}.`;
-
-      const selectedFile = files[fileIndex];
-      conn.reply(m.chat, `⏳ Procesando: *${selectedFile.name}*...`, m);
-      await downloadAndSend(selectedFile.id, selectedFile.name, conn, m, tradutor);
-
-    } else {
-      // Descarga directa de archivo
-      const fileId = link.match(/\/?id=(.+)/i)?.[1] || link.match(/\/d\/(.*?)\//)?.[1];
-      await downloadAndSend(fileId, null, conn, m, tradutor);
+    // 🟢 NUEVO LÍMITE: 2 GB = 2147483648 bytes
+    if (res.sizeBytes > 2147483648) { 
+        throw `El archivo es demasiado grande para enviarlo por WhatsApp (${res.fileSize}). El límite máximo es de 2GB.`;
     }
 
-  } catch (e) {
-    m.reply(typeof e === 'string' ? e : 'Error al procesar la solicitud.');
-    console.error(e);
-  }
-};
-
-async function downloadAndSend(id, knownName, conn, m, tradutor) {
-  let tempFilePath;
-  try {
-    const res = await GDriveDlById(id);
-    const fileName = (knownName || res.fileName || 'archivo_drive').replace(/[\\/:*?"<>|]/g, '_');
-    
     const fileResponse = await fetch(res.downloadUrl);
-    if (!fileResponse.ok) throw `Error HTTP: ${fileResponse.statusText}`;
+    if (!fileResponse.ok) throw `Error al descargar el archivo: ${fileResponse.statusText}`;
 
-    tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${fileName}`);
-    const totalBytes = parseInt(fileResponse.headers.get('content-length')) || 0;
+    tempFilePath = path.join(os.tmpdir(), `${Date.now()}-${res.fileName}`);
+    const totalBytes = res.sizeBytes;
     
+    // ==========================================
+    // 1. MONITOR DE DESCARGA (Drive -> Servidor)
+    // ==========================================
     let downloadedBytes = 0;
-    const startTime = Date.now();
+    const downloadStartTime = Date.now();
+    let lastDownloadLogTime = 0;
 
-    const downloadProgress = new Transform({
+    const downloadProgressStream = new Transform({
       transform(chunk, encoding, callback) {
         downloadedBytes += chunk.length;
-        const now = Date.now();
-        const duration = (now - startTime) / 1000;
-        const speed = duration > 0 ? (downloadedBytes / duration / 1024 / 1024).toFixed(2) : 0;
-        const percent = totalBytes ? ((downloadedBytes / totalBytes) * 100).toFixed(1) : '??';
+        const currentTime = Date.now();
         
-        // LOG EN UNA SOLA FILA LIMPIA (ANSI Escape Codes)
-        process.stdout.write(`\r\x1b[K📥 [GDRIVE] ${percent}% | ${speed} MB/s | ${fileName.substring(0, 25)}...`);
-        
+        if (currentTime - lastDownloadLogTime > 500) {
+           const elapsedTime = (currentTime - downloadStartTime) / 1000;
+           const speedBytes = elapsedTime > 0 ? downloadedBytes / elapsedTime : 0;
+           
+           const percent = ((downloadedBytes / totalBytes) * 100).toFixed(1);
+           const speedMBps = (speedBytes / (1024 * 1024)).toFixed(1);
+           const downloadedMB = (downloadedBytes / (1024 * 1024)).toFixed(1);
+           const totalMB = (totalBytes / (1024 * 1024)).toFixed(1);
+           
+           // Limpia la línea en terminales compatibles y acorta el texto
+           if (process.stdout.isTTY) {
+               process.stdout.clearLine(0);
+               process.stdout.cursorTo(0);
+           }
+           process.stdout.write(`\r📥 DL: ${percent}% | ${downloadedMB}/${totalMB}MB | Vel: ${speedMBps}MB/s`);
+           lastDownloadLogTime = currentTime;
+        }
         callback(null, chunk);
       }
     });
 
-    await pipeline(fileResponse.body, downloadProgress, fs.createWriteStream(tempFilePath));
-    process.stdout.write('\n✅ Descarga completada. Enviando a WhatsApp...\n');
+    console.log(`\nIniciando proceso para: ${res.fileName}`);
+    
+    await pipeline(
+        fileResponse.body, 
+        downloadProgressStream, 
+        fs.createWriteStream(tempFilePath)
+    );
+
+    console.log(`\n✅ Descarga completada. Iniciando subida a WhatsApp...`);
+
+    // ==========================================
+    // 2. MONITOR DE SUBIDA (Servidor -> WhatsApp)
+    // ==========================================
+    let uploadedBytes = 0;
+    const uploadStartTime = Date.now();
+    let lastUploadLogTime = 0;
+
+    const uploadProgressStream = new Transform({
+      transform(chunk, encoding, callback) {
+        uploadedBytes += chunk.length;
+        const currentTime = Date.now();
+
+        if (currentTime - lastUploadLogTime > 500) {
+           const elapsedTime = (currentTime - uploadStartTime) / 1000;
+           const speedBytes = elapsedTime > 0 ? uploadedBytes / elapsedTime : 0;
+
+           const percent = ((uploadedBytes / totalBytes) * 100).toFixed(1);
+           const speedMBps = (speedBytes / (1024 * 1024)).toFixed(1);
+           const uploadedMB = (uploadedBytes / (1024 * 1024)).toFixed(1);
+           const totalMB = (totalBytes / (1024 * 1024)).toFixed(1);
+
+           // Limpia la línea en terminales compatibles y acorta el texto
+           if (process.stdout.isTTY) {
+               process.stdout.clearLine(0);
+               process.stdout.cursorTo(0);
+           }
+           process.stdout.write(`\r📤 UP: ${percent}% | ${uploadedMB}/${totalMB}MB | Vel: ${speedMBps}MB/s`);
+           lastUploadLogTime = currentTime;
+        }
+        callback(null, chunk);
+      }
+    });
+
+    const readStream = fs.createReadStream(tempFilePath).pipe(uploadProgressStream);
+
+    // Calcular velocidad promedio para mostrar en el mensaje
+    const totalTimeUpload = (Date.now() - uploadStartTime) / 1000;
+    const avgSpeedMBps = ((totalBytes / totalTimeUpload) / (1024 * 1024)).toFixed(1);
+    
+    // Formatear el formato del archivo para que se lea mejor (ej: application/pdf -> pdf)
+    const formatoArchivo = res.mimetype.split('/')[1]?.toUpperCase() || 'DESCONOCIDO';
+
+    // 🎨 MENSAJE CON EMOJIS Y FORMATO
+    const infoCaption = `*╭━━〔 ✦ DESCARGA DRIVE 📥 ✦ 〕━━╮*
+
+  📄 *Nombre:* ${res.fileName}
+  ⚖️ *Peso:* ${res.fileSize}
+  🗂️ *Formato:* ${formatoArchivo}
+  ⚡ *Velocidad:* ${avgSpeedMBps} MB/s
+
+*╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯*`;
 
     await conn.sendMessage(m.chat, {
-        document: { url: tempFilePath }, 
-        fileName: fileName,
-        mimetype: fileResponse.headers.get('content-type') || 'application/octet-stream'
+        document: { stream: readStream }, 
+        fileName: res.fileName,
+        mimetype: res.mimetype,
+        caption: infoCaption
     }, { quoted: m });
 
-  } catch (err) {
-    console.error(err);
-    m.reply('Error al descargar o enviar el archivo.');
-  } finally {
-    if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-  }
-}
+    console.log(`\n🚀 Subida completada. Enviado con éxito a ${m.sender}\n`);
 
-async function GDriveFolderList(folderId) {
-  // Forzamos la vista móvil para una lectura más sencilla del HTML
-  const res = await fetch(`https://drive.google.com/drive/u/0/mobile/folders/${folderId}`, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15' }
-  });
-  const html = await res.text();
-  
-  const files = [];
-  const regex = /"([a-zA-Z0-9_-]{25,})",\["([^"]+)"/g;
-  let match;
-  
-  while ((match = regex.exec(html)) !== null) {
-    const id = match[1];
-    const name = match[2].replace(/\\u003d/g, '=').replace(/\\u0027/g, "'");
-    if (!files.find(f => f.id === id)) {
-      files.push({ id, name });
+    // Limpieza
+    if (fs.existsSync(tempFilePath)) {
+        fs.unlinkSync(tempFilePath);
     }
-    if (files.length >= 24) break; 
+
+  } catch (e) {
+    m.reply(typeof e === 'string' ? e : tradutor.texto3);
+    console.error('\n[ERROR DEL PLUGIN GDRIVE]:', e);
+    
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+        fs.unlinkSync(tempFilePath);
+    }
   }
-  return files;
-}
-
-async function GDriveDlById(id) {
-  const baseUrl = `https://drive.google.com/uc?id=${id}&export=download`;
-  const res = await fetch(baseUrl, { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0' } });
-  const text = await res.text();
-
-  // Bypass para la advertencia de archivos grandes (Virus Scan Warning)
-  if (text.includes('confirm=')) {
-    const confirmToken = text.match(/confirm=([a-zA-Z0-9_-]+)/)?.[1] || 't';
-    return {
-      downloadUrl: `${baseUrl}&confirm=${confirmToken}`,
-      fileName: text.match(/<span class="uc-name-size">.*?>(.*?)<\/a>/)?.[1] || 'archivo'
-    };
-  }
-
-  return {
-    downloadUrl: baseUrl,
-    fileName: 'archivo'
-  };
-}
+};
 
 handler.command = /^(gdrive)$/i;
 export default handler;
+
+async function GDriveDl(url) {
+  if (!(url && url.match(/drive\.google/i))) throw 'URL no válida';
+  
+  const idMatch = url.match(/\/?id=(.+)/i) || url.match(/\/d\/(.*?)\//);
+  const id = idMatch ? idMatch[1] : null;
+  if (!id) throw 'ID no encontrado';
+
+  const res = await fetch(`https://drive.google.com/uc?id=${id}&authuser=0&export=download`, {
+    method: 'post',
+    headers: {
+      'accept-encoding': 'gzip, deflate, br',
+      'content-length': '0',
+      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      'origin': 'https://drive.google.com',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.181 Safari/537.36',
+      'x-client-data': 'CKG1yQEIkbbJAQiitskBCMS2yQEIqZ3KAQioo8oBGLeYygE=',
+      'x-drive-first-party': 'DriveWebUi',
+      'x-json-requested': 'true'
+    }
+  });
+
+  const rawText = await res.text();
+  const { fileName, sizeBytes, downloadUrl } = JSON.parse(rawText.slice(4));
+  
+  if (!downloadUrl) throw '¡Límite de descarga alcanzado o el archivo es privado!';
+  
+  const data = await fetch(downloadUrl);
+  if (data.status !== 200) throw `Error HTTP: ${data.statusText}`;
+
+  return { 
+    downloadUrl, 
+    fileName, 
+    sizeBytes: Number(sizeBytes),
+    fileSize: formatSize(sizeBytes), 
+    mimetype: data.headers.get('content-type') 
+  };
+    }
