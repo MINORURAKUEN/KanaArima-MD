@@ -1,39 +1,68 @@
-const searchAnime = require('./anime-plugin'); // Tu archivo del plugin
+import axios from 'axios';
+import * as cheerio from 'cheerio';
 
-// ... dentro de tu manejador de mensajes (ej. client.on o messages.upsert)
-const messageText = text.trim();
+const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+};
 
-// 1. Definimos las Regex (Aceptan prefijos opcionales . ! ? o ninguno)
-const regexSub = /^[\.! \?]?descargaranimeSub\s+(.+)/i;
-const regexLat = /^[\.! \?]?descargaranimeLat\s+(.+)/i;
-
-// 2. Lógica para Subtitulado
-if (regexSub.test(messageText)) {
-    const query = messageText.match(regexSub)[1];
-    await sock.sendMessage(jid, { text: `🔍 Buscando subtitulado: ${query}...` });
-    
-    const res = await searchAnime(query, 'sub');
-    await enviarResultado(res, jid);
-} 
-
-// 3. Lógica para Latino
-else if (regexLat.test(messageText)) {
-    const query = messageText.match(regexLat)[1];
-    await sock.sendMessage(jid, { text: `🎙️ Buscando en latino: ${query}...` });
-    
-    const res = await searchAnime(query, 'latino');
-    await enviarResultado(res, jid);
-}
-
-// Función auxiliar para enviar la respuesta
-async function enviarResultado(res, jid) {
-    if (typeof res === 'string') {
-        await sock.sendMessage(jid, { text: res });
-    } else {
-        const imageUrl = res.image.startsWith('http') ? res.image : `https://tioanime.com${res.image}`;
-        await sock.sendMessage(jid, { 
-            image: { url: imageUrl }, 
-            caption: res.text 
-        });
+const providers = {
+    latino: {
+        name: 'Latanime',
+        url: 'https://latanime.org/buscar?q=',
+        selector: '.animes .anime',
+        title: '.title',
+        link: 'a',
+        img: 'img'
+    },
+    sub: {
+        name: 'TioAnime',
+        url: 'https://tioanime.com/directorio?q=',
+        selector: '.anime',
+        title: '.title',
+        link: 'a',
+        img: 'img'
     }
-}
+};
+
+// Definimos la función como una constante para exportarla al final
+const searchAnime = async (query, type = 'sub') => {
+    const provider = providers[type];
+    if (!provider) return "❌ Proveedor no válido.";
+    
+    const searchUrl = `${provider.url}${encodeURIComponent(query)}`;
+
+    try {
+        const { data } = await axios.get(searchUrl, { headers });
+        const $ = cheerio.load(data);
+        const results = [];
+
+        $(provider.selector).each((i, el) => {
+            if (i < 3) {
+                const title = $(el).find(provider.title).text().trim();
+                let link = $(el).find(provider.link).attr('href');
+                let img = $(el).find(provider.img).attr('src');
+
+                if (link && !link.startsWith('http')) {
+                    link = (type === 'sub' ? 'https://tioanime.com' : 'https://latanime.org') + link;
+                }
+
+                results.push({ title, link, img });
+            }
+        });
+
+        if (results.length === 0) return `❌ No encontré nada en ${provider.name}.`;
+
+        let caption = `📺 *Resultados en ${provider.name}:*\n\n`;
+        results.forEach((res, index) => {
+            caption += `*${index + 1}.* ${res.title}\n🔗 ${res.link}\n\n`;
+        });
+
+        return { text: caption, image: results[0].img };
+    } catch (e) {
+        return `⚠️ Error al buscar en ${provider.name}: ${e.message}`;
+    }
+};
+
+// CAMBIO CLAVE: Usamos export default en lugar de module.exports
+export default searchAnime;
+
