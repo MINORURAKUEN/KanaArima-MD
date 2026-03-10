@@ -6,81 +6,75 @@ let handler = async (m, { conn, args, text, usedPrefix, command }) => {
   const datas = global;
   const idioma = datas.db.data.users[m.sender]?.language || global.defaultLenguaje || 'es';
   
-  // Lectura del archivo de idioma
+  // Sistema de traducción con protección
   let _translate;
   try {
     _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
-  } catch (e) {
-    _translate = JSON.parse(fs.readFileSync(`./src/languages/es.json`)); // Fallback a español
+  } catch {
+    _translate = JSON.parse(fs.readFileSync(`./src/languages/es.json`));
   }
-  
   const tradutor = _translate.plugins.descargas_play;
 
   if (!text) throw `${tradutor.texto1[0]} ${usedPrefix + command} ${tradutor.texto1[1]}`;      
   
-  let additionalText = command === 'play' ? 'audio' : 'vídeo';
-
-  // Buscar el video
+  const isVideo = command === 'play2';
   const result = await search(text);
   if (!result) throw '❌ No se encontraron resultados.';
 
-  const body = `
-${tradutor.texto2[0]} ${result.title}
-${tradutor.texto2[1]} ${result.ago}
-${tradutor.texto2[2]} ${result.duration.timestamp}
-${tradutor.texto2[3]} ${formatNumber(result.views)}
-${tradutor.texto2[4]} ${result.author.name}
-${tradutor.texto2[5]} ${result.videoId}
-${tradutor.texto2[6]} ${result.type}
-${tradutor.texto2[7]} ${result.url}
-${tradutor.texto2[8]} ${result.author.url}
+  const body = `*TÍTULO:* ${result.title}\n*DURACIÓN:* ${result.duration.timestamp}\n*VISTAS:* ${formatNumber(result.views)}\n*ENLACE:* ${result.url}\n\n> _Descargando ${isVideo ? 'video' : 'audio'}..._`.trim();
 
-${tradutor.texto2[9]} ${additionalText}, ${tradutor.texto2[10]}`.trim();
-
-  // Enviar miniatura e info
   await conn.sendMessage(m.chat, { image: { url: result.thumbnail }, caption: body }, { quoted: m });
 
-  // Lógica de descarga
-  if (command === 'play') {
+  const url = result.url;
+
+  if (!isVideo) {
+    // --- LÓGICA PARA AUDIO (MP3) CON MULTI-API ---
     try {
-      // Intento 1: Herramientas internas
-      const audiodlp = await global.tools.downloader.ytmp3(result.url);
-      const downloader = audiodlp.download;
-      await conn.sendMessage(m.chat, { audio: { url: downloader }, mimetype: "audio/mpeg" }, { quoted: m });
-    } catch (error) {
-      console.log(' Fallback a Ruby-core mp3...');
+      // API 1: Local / Herramientas del bot
+      const res = await global.tools.downloader.ytmp3(url);
+      await conn.sendMessage(m.chat, { audio: { url: res.download }, mimetype: "audio/mpeg" }, { quoted: m });
+    } catch {
       try {
-        const res = await fetch(`https://ruby-core.vercel.app/api/download/youtube/mp3?url=${encodeURIComponent(result.url)}`);
-        const ruby = await res.json();
-        if (ruby?.status && ruby?.download?.url) {
-          await conn.sendMessage(m.chat, { audio: { url: ruby.download.url }, mimetype: "audio/mpeg" }, { quoted: m });
-        } else {
-          conn.reply(m.chat, tradutor.texto6, m);
+        // API 2: Ruby-Core
+        const res = await (await fetch(`https://ruby-core.vercel.app/api/download/youtube/mp3?url=${encodeURIComponent(url)}`)).json();
+        if (!res.status) throw 'fail';
+        await conn.sendMessage(m.chat, { audio: { url: res.download.url }, mimetype: "audio/mpeg" }, { quoted: m });
+      } catch {
+        try {
+          // API 3: Akuari
+          const res = await (await fetch(`https://api.akuari.my.id/downloader/youtube3?link=${encodeURIComponent(url)}`)).json();
+          await conn.sendMessage(m.chat, { audio: { url: res.result.mp3 }, mimetype: "audio/mpeg" }, { quoted: m });
+        } catch {
+          try {
+            // API 4: Dylux (API de respaldo común)
+            const res = await (await fetch(`https://api.dhammadigital.com/api/ytv7?url=${url}`)).json();
+            await conn.sendMessage(m.chat, { audio: { url: res.result.dl_link }, mimetype: "audio/mpeg" }, { quoted: m });
+          } catch {
+            conn.reply(m.chat, '❌ Todas las fuentes fallaron. El video podría tener restricciones de edad o copyright.', m);
+          }
         }
-      } catch (err2) {
-        conn.reply(m.chat, tradutor.texto6, m);
       }
     }
-  }
-
-  if (command === 'play2') {
+  } else {
+    // --- LÓGICA PARA VIDEO (MP4) CON MULTI-API ---
     try {
-      // Intento 1: Herramientas internas
-      const videodlp = await global.tools.downloader.ytmp4(result.url);
-      const downloader = videodlp.download;
-      await conn.sendMessage(m.chat, { video: { url: downloader }, mimetype: "video/mp4" }, { quoted: m });
-    } catch (error) {
-      console.log(' Fallback a Ruby-core mp4...');
+      // API 1: Local
+      const res = await global.tools.downloader.ytmp4(url);
+      await conn.sendMessage(m.chat, { video: { url: res.download }, mimetype: "video/mp4" }, { quoted: m });
+    } catch {
       try {
-        const res = await fetch(`https://ruby-core.vercel.app/api/download/youtube/mp4?url=${encodeURIComponent(result.url)}`);
-        const ruby = await res.json();
-        if (ruby?.status && ruby?.download?.url) {
-          await conn.sendMessage(m.chat, { video: { url: ruby.download.url }, mimetype: "video/mp4" }, { quoted: m });
-        } else {
-          conn.reply(m.chat, tradutor.texto6, m);
+        // API 2: Ruby-Core
+        const res = await (await fetch(`https://ruby-core.vercel.app/api/download/youtube/mp4?url=${encodeURIComponent(url)}`)).json();
+        if (!res.status) throw 'fail';
+        await conn.sendMessage(m.chat, { video: { url: res.download.url }, mimetype: "video/mp4" }, { quoted: m });
+      } catch {
+        try {
+          // API 3: Alyasany (A veces requiere API Key, pero suele tener free tier)
+          const res = await (await fetch(`https://api.alyasany.my.id/api/ytmp4?url=${url}`)).json();
+          await conn.sendMessage(m.chat, { video: { url: res.result.download.url }, mimetype: "video/mp4" }, { quoted: m });
+        } catch {
+          conn.reply(m.chat, '❌ No se pudo descargar el video. Intenta con un enlace más corto.', m);
         }
-      } catch (err2) {
-        conn.reply(m.chat, tradutor.texto6, m);
       }
     }
   }
@@ -88,12 +82,12 @@ ${tradutor.texto2[9]} ${additionalText}, ${tradutor.texto2[10]}`.trim();
 
 handler.help = ['play', 'play2'];
 handler.tags = ['downloader'];
-handler.command = /^(play|play2)$/i; // Esto activa ambos comandos
+handler.command = /^(play|play2)$/i;
 
 export default handler;
 
-async function search(query, options = {}) {
-  const searchRes = await yts.search({ query, hl: 'es', gl: 'ES', ...options });
+async function search(query) {
+  const searchRes = await yts.search({ query, hl: 'es', gl: 'ES' });
   return searchRes.videos[0];
 }
 
