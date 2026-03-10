@@ -1,68 +1,67 @@
-import axios from 'axios';
-import * as cheerio from 'cheerio';
+import axios from 'axios'
+import * as cheerio from 'cheerio'
 
-const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
-};
-
-const providers = {
-    latino: {
-        name: 'Latanime',
-        url: 'https://latanime.org/buscar?q=',
-        selector: '.animes .anime',
-        title: '.title',
-        link: 'a',
-        img: 'img'
-    },
-    sub: {
-        name: 'TioAnime',
-        url: 'https://tioanime.com/directorio?q=',
-        selector: '.anime',
-        title: '.title',
-        link: 'a',
-        img: 'img'
-    }
-};
-
-// Definimos la función como una constante para exportarla al final
-const searchAnime = async (query, type = 'sub') => {
-    const provider = providers[type];
-    if (!provider) return "❌ Proveedor no válido.";
+let handler = async (m, { conn, text, usedPrefix, command }) => {
+    if (!text) throw `*⚠️ Ejemplo:* ${usedPrefix}${command} One Piece`
     
-    const searchUrl = `${provider.url}${encodeURIComponent(query)}`;
+    // Determinar si es latino o sub basándose en el comando
+    let type = command.toLowerCase().includes('lat') ? 'latino' : 'sub'
+    let providerName = type === 'latino' ? 'Latanime' : 'TioAnime'
+    let baseUrl = type === 'latino' ? 'https://latanime.org/buscar?q=' : 'https://tioanime.com/directorio?q='
+
+    await m.reply(`🔍 Buscando "${text}" en ${providerName}...`)
 
     try {
-        const { data } = await axios.get(searchUrl, { headers });
-        const $ = cheerio.load(data);
-        const results = [];
+        const { data } = await axios.get(`${baseUrl}${encodeURIComponent(text)}`, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36' }
+        })
+        const $ = cheerio.load(data)
+        const results = []
 
-        $(provider.selector).each((i, el) => {
+        // Selectores según la web
+        let selector = type === 'latino' ? '.animes .anime' : '.anime'
+        
+        $(selector).each((i, el) => {
             if (i < 3) {
-                const title = $(el).find(provider.title).text().trim();
-                let link = $(el).find(provider.link).attr('href');
-                let img = $(el).find(provider.img).attr('src');
+                let title = $(el).find('.title').text().trim()
+                let link = $(el).find('a').attr('href')
+                let img = $(el).find('img').attr('src')
 
                 if (link && !link.startsWith('http')) {
-                    link = (type === 'sub' ? 'https://tioanime.com' : 'https://latanime.org') + link;
+                    link = (type === 'sub' ? 'https://tioanime.com' : 'https://latanime.org') + link
                 }
-
-                results.push({ title, link, img });
+                results.push({ title, link, img })
             }
-        });
+        })
 
-        if (results.length === 0) return `❌ No encontré nada en ${provider.name}.`;
+        if (results.length === 0) return m.reply(`❌ No se encontraron resultados en ${providerName}.`)
 
-        let caption = `📺 *Resultados en ${provider.name}:*\n\n`;
+        let caption = `📺 *RESULTADOS EN ${providerName.toUpperCase()}*\n\n`
         results.forEach((res, index) => {
-            caption += `*${index + 1}.* ${res.title}\n🔗 ${res.link}\n\n`;
-        });
+            caption += `*${index + 1}.* ${res.title}\n🔗 ${res.link}\n\n`
+        })
 
-        return { text: caption, image: results[0].img };
+        // Enviar la imagen del primer resultado con la lista
+        let finalImg = results[0].img
+        if (finalImg && !finalImg.startsWith('http')) {
+            finalImg = type === 'sub' ? 'https://tioanime.com' + finalImg : finalImg
+        }
+
+        await conn.sendMessage(m.chat, { 
+            image: { url: finalImg }, 
+            caption: caption.trim() 
+        }, { quoted: m })
+
     } catch (e) {
-        return `⚠️ Error al buscar en ${provider.name}: ${e.message}`;
+        console.error(e)
+        m.reply('⚠️ Hubo un error al conectar con la página.')
     }
-};
+}
 
-// CAMBIO CLAVE: Usamos export default en lugar de module.exports
-export default searchAnime;
+// Estos son los activadores del comando
+handler.command = /^(descargaranimeSub|descargaranimeLat)$/i
+handler.tags = ['anime']
+handler.help = ['descargaranimeSub', 'descargaranimeLat']
+
+export default handler
 
