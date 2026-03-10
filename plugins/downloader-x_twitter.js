@@ -11,49 +11,52 @@ const handler = async (m, {conn, text, usedPrefix, command}) => {
   const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
   const tradutor = _translate.plugins.downloader_x_twitter;
 
-  if (!text) throw `${tradutor.texto1} ${usedPrefix + command} https://twitter.com/auronplay/status/1586487664274206720?s=20&t=3snvkvwGUIez5iWYQAehpw`;
+  if (!text) throw `${tradutor.texto1} ${usedPrefix + command} https://twitter.com/auronplay/status/1586487664274206720`;
   if (enviando) return;
   enviando = true;
 
   try {
     await conn.sendMessage(m.chat, {text: global.wait}, {quoted: m}); 
+    console.log('[X-DL] ⏳ Buscando enlace...');
     
-    // Instanciamos el nuevo scraper
     const scraper = new TwitterDL();
     const res = await scraper.download(text); 
     
     if (!res || !res.downloads || res.downloads.length === 0) {
-        enviando = false;
         throw tradutor.texto4 || "No se encontraron medios para descargar.";
     }
 
     const caption = res.title ? res.title : tradutor.texto2;
-    
-    // Verificamos si es un video comprobando si alguna URL contiene .mp4
     const isVideo = res.downloads.some(d => d.url.includes('.mp4'));
 
     if (isVideo) {
-      // Si es video, SSSTwitter devuelve varias calidades. Elegimos la primera (suele ser la mejor/HD)
+      console.log('[X-DL] 🎥 Video detectado, descargando buffer...');
       const videoData = res.downloads.find(d => d.url.includes('.mp4')) || res.downloads[0];
-      await conn.sendMessage(m.chat, {video: {url: videoData.url}, caption: caption}, {quoted: m});
+      
+      // DESCARGAMOS EL BUFFER DIRECTAMENTE PARA EVITAR QUE BAILEYS SE TRABE
+      const videoBuffer = await axios.get(videoData.url, { responseType: 'arraybuffer' });
+      
+      console.log('[X-DL] 📤 Enviando video a WhatsApp...');
+      await conn.sendMessage(m.chat, {video: Buffer.from(videoBuffer.data), caption: caption}, {quoted: m});
       
     } else {
-      // Si es foto, iteramos (por si es un hilo/carrusel de varias imágenes)
+      console.log('[X-DL] 📸 Imágenes detectadas, procesando...');
       for (let i = 0; i < res.downloads.length; i++) {
-        // Solo enviamos el caption en la primera imagen para no hacer spam de texto
         const imgCaption = i === 0 ? caption : ''; 
         await conn.sendMessage(m.chat, {image: {url: res.downloads[i].url}, caption: imgCaption}, {quoted: m});
       }
     }
     
-    enviando = false;
+    console.log('[X-DL] ✅ ¡Enviado con éxito!');
   } catch (e) {
-    enviando = false;
+    console.error('[X-DL] ❌ Error:', e);
     throw tradutor.texto3;
+  } finally {
+    // ESTO ASEGURA QUE SIEMPRE SE DESBLOQUEE, INCLUSO SI EXPLOTA
+    enviando = false; 
   }
 };    
 
-// 👇 AQUÍ ESTÁ EL CAMBIO: Ahora responde exactamente a "twitter" o "x" ignorando mayúsculas/minúsculas
 handler.command = /^(twitter|x)$/i;
 export default handler;
 
@@ -65,8 +68,8 @@ class TwitterDL {
         this.client = axios.create({
             baseURL: 'https://ssstwitter.com',
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                 'Origin': 'https://ssstwitter.com',
                 'Referer': 'https://ssstwitter.com/en-11'
             }
