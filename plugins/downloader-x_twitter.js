@@ -1,134 +1,127 @@
 import axios from 'axios';
 import fs from 'fs';
-import FormData from 'form-data';
-import * as cheerio from 'cheerio';
 
 let enviando = false;
-
 const handler = async (m, {conn, text, usedPrefix, command}) => {
   const datas = global;
   const idioma = datas.db.data.users[m.sender].language || global.defaultLenguaje;
   const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
   const tradutor = _translate.plugins.downloader_x_twitter;
 
-  if (!text) throw `${tradutor.texto1} ${usedPrefix + command} https://twitter.com/auronplay/status/1586487664274206720`;
+  // Mensaje más sutil y dinámico sin el link de AuronPlay
+  if (!text) throw `*${tradutor.texto1}*\n\n*${usedPrefix + command}* https://x.com/username/status/123456789`;
+  
   if (enviando) return;
   enviando = true;
 
   try {
     await conn.sendMessage(m.chat, {text: global.wait}, {quoted: m}); 
-    console.log('[X-DL] ⏳ Buscando enlace...');
-    
-    const scraper = new TwitterDL();
-    const res = await scraper.download(text); 
-    
-    if (!res || !res.downloads || res.downloads.length === 0) {
-        throw tradutor.texto4 || "No se encontraron medios para descargar.";
-    }
+    const res = await TwitterDL(text, tradutor);
 
-    const caption = res.title ? res.title : tradutor.texto2;
-    const isVideo = res.downloads.some(d => d.url.includes('.mp4'));
-
-    if (isVideo) {
-      console.log('[X-DL] 🎥 Video detectado, descargando buffer...');
-      const videoData = res.downloads.find(d => d.url.includes('.mp4')) || res.downloads[0];
-      
-      // DESCARGAMOS EL BUFFER DIRECTAMENTE PARA EVITAR QUE BAILEYS SE TRABE
-      const videoBuffer = await axios.get(videoData.url, { responseType: 'arraybuffer' });
-      
-      console.log('[X-DL] 📤 Enviando video a WhatsApp...');
-      await conn.sendMessage(m.chat, {video: Buffer.from(videoBuffer.data), caption: caption}, {quoted: m});
-      
-    } else {
-      console.log('[X-DL] 📸 Imágenes detectadas, procesando...');
-      for (let i = 0; i < res.downloads.length; i++) {
-        const imgCaption = i === 0 ? caption : ''; 
-        await conn.sendMessage(m.chat, {image: {url: res.downloads[i].url}, caption: imgCaption}, {quoted: m});
+    if (res?.result.type == 'video') {
+      const caption = res?.result.caption ? res.result.caption : tradutor.texto2;
+      for (let i = 0; i < res.result.media.length; i++) {
+        await conn.sendMessage(m.chat, {video: {url: res.result.media[i].result[0].url}, caption: caption}, {quoted: m});
       }
+      enviando = false;
+      return;
+    } else if (res?.result.type == 'photo') {
+      const caption = res?.result.caption ? res.result.caption : tradutor.texto2;
+      for (let i = 0; i < res.result.media.length; i++) {
+        await conn.sendMessage(m.chat, {image: {url: res.result.media[i].url}, caption: caption}, {quoted: m});
+      }
+      enviando = false;
+      return;
     }
-    
-    console.log('[X-DL] ✅ ¡Enviado con éxito!');
   } catch (e) {
-    console.error('[X-DL] ❌ Error:', e);
+    enviando = false;
     throw tradutor.texto3;
-  } finally {
-    // ESTO ASEGURA QUE SIEMPRE SE DESBLOQUEE, INCLUSO SI EXPLOTA
-    enviando = false; 
   }
-};    
+};
 
-handler.command = /^(twitter|x)$/i;
+handler.command = /^(x|twitter|xdl|dlx|twdl|twt|twitterdl)$/i;
 export default handler;
 
-// ==========================================
-// CLASE SCRAPER SSSTWITTER
-// ==========================================
-class TwitterDL {
-    constructor() {
-        this.client = axios.create({
-            baseURL: 'https://ssstwitter.com',
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Origin': 'https://ssstwitter.com',
-                'Referer': 'https://ssstwitter.com/en-11'
-            }
+const _twitterapi = (id) => `https://info.tweeload.site/status/${id}.json`;
+
+const getAuthorization = async () => {
+  const { data } = await axios.get("https://pastebin.com/raw/SnCfd4ru");
+  return data;
+};
+
+const TwitterDL = async (url, tradutor) => {
+  return new Promise(async (resolve, reject) => {
+    const id = url.match(/\/([\d]+)/);
+    if (!id)
+      return resolve({
+        status: "error",
+        message: tradutor.texto4,
+      });
+
+    try {
+      const response = await axios.get(_twitterapi(id[1]), {
+        method: "GET",
+        headers: {
+          Authorization: await getAuthorization(),
+          "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.132 Safari/537.36",
+        },
+      });
+
+      if (response.data.code !== 200) {
+        return resolve({
+          status: "error",
+          message: tradutor.texto5,
         });
-    }
+      }
 
-    async getToken() {
-        const r = await this.client.get('/en-11');
-        const $ = cheerio.load(r.data);
-        const f = $('form[data-hx-post]');
-        const v = f.attr('include-vals');
-        const m = v.match(/tt:'([^']+)',ts:(\d+),source:'([^']+)'/);
-        return { tt: m[1], ts: parseInt(m[2]), source: m[3] };
-    }
+      const author = {
+        id: response.data.tweet.author.id,
+        name: response.data.tweet.author.name,
+        username: response.data.tweet.author.screen_name,
+        avatar_url: response.data.tweet.author.avatar_url,
+      };
 
-    async download(url) {
-        const t = await this.getToken();
-        const fd = new FormData();
-        fd.append('id', url);
-        fd.append('locale', 'en');
-        fd.append('tt', t.tt);
-        fd.append('ts', t.ts.toString());
-        fd.append('source', t.source);
-        const h = {
-            'HX-Request': 'true',
-            'HX-Current-URL': 'https://ssstwitter.com/en-11',
-            'HX-Target': 'target',
-            ...fd.getHeaders()
-        };
-        const r = await this.client.post('/', fd, { headers: h });
-        return this.parseLinks(r.data);
-    }
+      let media = [];
+      let type;
 
-    parseLinks(html) {
-        const $ = cheerio.load(html);
-        const links = [];
-        $('.download-btn').each((i, b) => {
-            const u = $(b).attr('href') || $(b).attr('data-directurl');
-            const txt = $(b).text().trim();
-            const q = txt.match(/(\d+x\d+)/)?.[1] || this.getQ(txt);
-            if (u && u.startsWith('http')) {
-                links.push({ quality: q, url: u });
-            }
+      if (response.data.tweet?.media?.videos) {
+        type = "video";
+        response.data.tweet.media.videos.forEach((v) => {
+          const resultVideo = [];
+          v.video_urls.forEach((z) => {
+            const resMatch = z.url.match(/([\d ]{2,5}[x][\d ]{2,5})/);
+            resultVideo.push({
+              bitrate: z.bitrate,
+              url: z.url,
+              resolution: resMatch ? resMatch[0] : "HD"
+            });
+          });
+          if (resultVideo.length !== 0) {
+            media.push({
+              type: v.type,
+              result: v.type === "video" ? resultVideo : v.url,
+            });
+          }
         });
-        const title = $('.result-title').text().trim();
-        const thumb = $('.result-thumbnail img').attr('src');
-        return { 
-            title: title || 'X Downloader', 
-            thumbnail: thumb || '', 
-            downloads: links 
-        };
-    }
+      } else {
+        type = "photo";
+        response.data.tweet.media.photos.forEach((v) => {
+          media.push(v);
+        });
+      }
 
-    getQ(txt) {
-        if (txt.includes('HD')) return 'HD';
-        const resolutions = ['640x640', '540x540', '320x320'];
-        for (const res of resolutions) {
-            if (txt.includes(res)) return res;
-        }
-        return txt.match(/\d+x\d+/)?.[0] || 'Unknown';
+      resolve({
+        status: "success",
+        result: {
+          caption: response.data.tweet.text,
+          author,
+          type,
+          media: media.length !== 0 ? media : null,
+        },
+      });
+    } catch (err) {
+      reject(err);
     }
-}
+  });
+};
+          
