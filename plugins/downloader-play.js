@@ -1,72 +1,77 @@
-import { exec } from 'child_process'
-import { promisify } from 'util'
 import fs from 'fs'
-import path from 'path'
+import fetch from 'node-fetch'
 import yts from 'yt-search'
 
-const execPromise = promisify(exec)
+let handler = async (m, { conn, args, text, usedPrefix, command }) => {
+  const datas = global;
+  const idioma = datas.db.data.users[m.sender].language || global.defaultLenguaje;
+  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
+  const tradutor = _translate.plugins.descargas_play
 
-let handler = async (m, { conn, text, usedPrefix, command }) => {
-  if (!text) throw `*[❗] Uso:* ${usedPrefix + command} <nombre o enlace>`;
-
-  const isVideo = command === 'play2'
-  const result = await yts(text)
-  const video = result.videos[0]
-  if (!video) throw '❌ No se encontró el video.'
-
-  await conn.sendMessage(m.chat, { 
-    image: { url: video.thumbnail }, 
-    caption: `*DESCARGANDO ${isVideo ? 'VIDEO' : 'AUDIO'}* 📥\n\n*Título:* ${video.title}\n*Calidad:* La mejor disponible` 
-  }, { quoted: m })
-
-  const arch = process.arch === 'arm64' ? './yt-dlp_linux_aarch64' : './yt-dlp_linux'
-  const tmpDir = path.join(process.cwd(), 'tmp')
-  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir)
-
-  // Nombre base sin extensión fija para el audio
-  const baseFilename = path.join(tmpDir, `${video.videoId}_${Date.now()}`)
+  if (!text) throw `${tradutor.texto1[0]} ${usedPrefix + command} ${tradutor.texto1[1]}`;      
   
-  let commandExec;
-  if (isVideo) {
-    // Intenta MP4 directo (compatible con WhatsApp)
-    commandExec = `${arch} -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" --merge-output-format mp4 "${video.url}" -o "${baseFilename}.mp4"`
-  } else {
-    /** * ESTRATEGIA DE AUDIO: 
-     * Intentamos extraer audio. Si FFmpeg falla, yt-dlp descargará 
-     * el formato original (m4a/webm) automáticamente.
-     **/
-    commandExec = `${arch} -f "bestaudio" -x --audio-format mp3 --audio-quality 0 --continue --no-part --prefer-free-formats "${video.url}" -o "${baseFilename}.%(ext)s"`
-  }
+  const isVideo = command === 'play2';
+  const additionalText = isVideo ? 'vídeo' : 'audio';
+
+  const result = await search(args.join(' '))
+  if (!result) throw 'No se encontraron resultados.';
+
+  const body = `${tradutor.texto2[0]} ${result.title}\n${tradutor.texto2[1]} ${result.ago}\n${tradutor.texto2[2]} ${result.duration.timestamp}\n${tradutor.texto2[3]} ${formatNumber(result.views)}\n${tradutor.texto2[4]} ${result.author.name}\n${tradutor.texto2[5]} ${result.videoId}\n${tradutor.texto2[6]} ${result.type}\n${tradutor.texto2[7]} ${result.url}\n${tradutor.texto2[8]} ${result.author.url}\n\n${tradutor.texto2[9]} ${additionalText}, ${tradutor.texto2[10]}`.trim();
+  
+  await conn.sendMessage(m.chat, { image: { url: result.thumbnail }, caption: body }, { quoted: m });
+
+  const videoUrl = result.url;
+  let downloadUrl = null;
 
   try {
-    await execPromise(commandExec)
-
-    // Buscamos el archivo que se creó (ya que la extensión puede variar)
-    const files = fs.readdirSync(tmpDir)
-    const fileName = files.find(f => f.startsWith(path.basename(baseFilename)))
-    const fullPath = path.join(tmpDir, fileName)
-
-    if (isVideo) {
-      await conn.sendMessage(m.chat, { video: { url: fullPath }, caption: video.title, mimetype: 'video/mp4' }, { quoted: m })
+    // --- INTENTO CON API SIPUTZX (Principal) ---
+    const apiType = isVideo ? 'ytmp4' : 'ytmp3';
+    const res = await fetch(`https://api.siputzx.my.id/api/d/${apiType}?url=${encodeURIComponent(videoUrl)}`);
+    const json = await res.json();
+    
+    if (json.status && json.data?.dl) {
+        downloadUrl = json.data.dl;
     } else {
-      // Enviamos el audio con el mimetype correcto detectando la extensión
-      const ext = path.extname(fileName).replace('.', '')
-      await conn.sendMessage(m.chat, { 
-        audio: { url: fullPath }, 
-        mimetype: ext === 'mp3' ? 'audio/mpeg' : `audio/${ext}`,
-        fileName: `${video.title}.${ext}` 
-      }, { quoted: m })
+        // --- FALLBACKS SI FALLA LA PRIMERA ---
+        if (!isVideo) {
+            // Intento Ryzendesu para MP3
+            const resRyzen = await fetch(`https://api.ryzendesu.vip/api/downloader/ytmp3?url=${encodeURIComponent(videoUrl)}`);
+            const jsonRyzen = await resRyzen.json();
+            downloadUrl = jsonRyzen.url || jsonRyzen.link;
+        } else {
+            // Intento Deliriuss para MP4
+            const resDel = await fetch(`https://deliriussapi-oficial.vercel.app/download/ytmp4?url=${encodeURIComponent(videoUrl)}`);
+            const jsonDel = await resDel.json();
+            downloadUrl = jsonDel.data?.download?.url || jsonDel.downloadUrl;
+        }
     }
 
-    fs.unlinkSync(fullPath) // Limpiar
-  } catch (e) {
-    console.error(e)
-    conn.reply(m.chat, `❌ Error crítico: ${e.message}`, m)
+    if (!downloadUrl) throw 'No se pudo obtener el enlace de descarga.';
+
+    // --- ENVÍO DEL ARCHIVO ---
+    const messageOptions = isVideo 
+        ? { video: { url: downloadUrl }, fileName: `${result.title}.mp4`, mimetype: 'video/mp4' }
+        : { audio: { url: downloadUrl }, fileName: `${result.title}.mp3`, mimetype: 'audio/mpeg' };
+
+    await conn.sendMessage(m.chat, messageOptions, { quoted: m });
+
+  } catch (error) {
+    console.error('Error en la descarga:', error);
+    conn.reply(m.chat, tradutor.texto6, m);
   }
+};
+
+handler.help = ['play', 'play2'];
+handler.tags = ['downloader'];
+handler.command = ['play', 'play2'];
+
+export default handler;
+
+async function search(query, options = {}) {
+  const searchRes = await yts.search({ query, hl: 'es', gl: 'ES', ...options });
+  return searchRes.videos[0];
 }
 
-handler.help = ['play', 'play2']
-handler.tags = ['downloader']
-handler.command = /^(play|play2)$/i
-
-export default handler
+function formatNumber(num) {
+  return num ? num.toLocaleString() : '0';
+  }
