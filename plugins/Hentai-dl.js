@@ -2,49 +2,47 @@ import axios from 'axios'
 import * as cheerio from 'cheerio'
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
-    if (!text) throw `*⚠️ Ejemplo:* ${usedPrefix}${command} overflow`
+    // Si el usuario no escribe nada, muestra el ejemplo que pediste
+    if (!text) throw `*⚠️ Ejemplo:* ${usedPrefix}${command} joshi luck`
     
-    const baseUrl = `https://hentaila.com/buscar?s=${encodeURIComponent(text)}`
-    
-    // HEADERS TIPO GOOGLE CHROME (BYPASS CLOUDFLARE BÁSICO)
-    const googleHeaders = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Cache-Control': 'max-age=0',
-        'Sec-Ch-Ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-        'Sec-Ch-Ua-Mobile': '?0',
-        'Sec-Ch-Ua-Platform': '"Windows"',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1',
-        'Referer': 'https://www.google.com/'
-    }
+    const baseUrl = `https://tiohentai.com/buscar?s=${encodeURIComponent(text)}`
+    const providerName = 'TioHentai'
 
+    // Mensaje de espera con estética limpia
     await conn.sendMessage(m.chat, { 
-        text: `🔞 *Buscando contenido:* _${text}_\n🌐 *Fuente:* _HentaiLA (Google Engine)_...` 
+        text: `🔞 *Buscando:* _${text}_\n🌐 *Fuente:* _${providerName}_...` 
     }, { quoted: m })
 
     try {
-        const { data } = await axios.get(baseUrl, { headers: googleHeaders })
+        const { data } = await axios.get(baseUrl, {
+            headers: { 
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+            }
+        })
         const $ = cheerio.load(data)
         const results = []
 
-        $('.hentai').each((i, el) => {
+        // Selectores optimizados para la estructura de TioHentai
+        $('article.anime, .thumb, .hentai').each((i, el) => {
             if (i < 5) {
-                let title = $(el).find('h2').text().trim() || $(el).find('.title').text().trim()
+                let title = $(el).find('h3, .title, h2').text().trim()
                 let link = $(el).find('a').attr('href')
                 let img = $(el).find('img').attr('src')
-                if (title && link) results.push({ title, link, img })
+                
+                if (title && link) {
+                    // Normalizar enlaces e imágenes
+                    if (!link.startsWith('http')) link = 'https://tiohentai.com' + link
+                    if (img && !img.startsWith('http')) img = 'https://tiohentai.com' + img
+                    
+                    results.push({ title, link, img })
+                }
             }
         })
 
-        if (results.length === 0) return m.reply(`❌ *No se hallaron resultados.* Verifica el nombre.`)
+        if (results.length === 0) return m.reply(`❌ *No se hallaron coincidencias para:* _${text}_`)
 
-        let caption = `🔞 *RESULTADOS H-CONTENT* 🔞\n`
+        // --- DISEÑO DEL RESULTADO ---
+        let caption = `🔞 *TIO-HENTAI SEARCH* 🔞\n`
         caption += `═══════════════════\n\n`
 
         results.forEach((res, index) => {
@@ -53,8 +51,9 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
             caption += `───────────────────\n\n`
         })
 
-        caption += `💡 _Usa el link para ver el contenido._`
+        caption += `💡 _Toca el enlace para ver los detalles._`
 
+        // Enviar imagen del primer resultado (si existe)
         if (results[0].img) {
             await conn.sendMessage(m.chat, { 
                 image: { url: results[0].img }, 
@@ -66,10 +65,11 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
     } catch (e) {
         console.error(e)
-        m.reply('⚠️ *Cloudflare Error:* El sitio detectó el bot. Intenta de nuevo o usa una VPN en Termux.')
+        m.reply('⚠️ *Error:* El sitio no respondió. Verifica tu conexión o intenta más tarde.')
     }
 }
 
+// Configuración de comando y tags
 handler.command = /^(descargarH)$/i
 handler.tags = ['hentai']
 handler.help = ['descargarH']
