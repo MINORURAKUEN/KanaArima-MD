@@ -1,10 +1,8 @@
 // dla.js
 // Copyright (C) 2025 Weskerty
-//
 // Este programa se distribuye bajo los términos de la Licencia Pública General Affero de GNU (AGPLv3).
-// Usted puede usarlo, modificarlo y redistribuirlo bajo esa licencia.
 // Licencia completa: https://www.gnu.org/licenses/agpl-3.0.html
-// Cambio Actualizar Automaticamente.
+// Modificado y optimizado para máxima compatibilidad con WhatsApp.
 
 import fs from "fs";
 import path, { join, basename } from "path";
@@ -34,10 +32,12 @@ const ytDlpBinaries = new Map([
   ['default', 'yt-dlp'],
 ]);
 
-// Aqui se elige las banderas, Calidad de video etc. Ver documentacion yt-dlp 
+// OPTIMIZACIÓN: Formatos más compatibles para WhatsApp (evita errores de ffmpeg)
 const formats = {
-  video: '-f "sd/18/bestvideo[height<=720][vcodec*=h264]+bestaudio[acodec*=aac]/bestvideo[height<=720][vcodec*=h264]+bestaudio[acodec*=mp4a]/bestvideo[height<=720][vcodec*=h264]+bestaudio/bestvideo[height<=720]+bestaudio/bestvideo[vcodec*=h264]+bestaudio/bestvideo+bestaudio/best" --sponsorblock-mark all', 
-  audio: '-f "ba/best" -x --audio-format mp3 --audio-quality 0',
+  // Busca el mejor MP4 compatible. Ideal para TikTok, IG, Twitter y YouTube.
+  video: '-f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" --sponsorblock-mark all', 
+  // Usa m4a nativo. WhatsApp lo lee perfecto, es más rápido y evita el error "MP3 no disponible".
+  audio: '-f "bestaudio[ext=m4a]/bestaudio/best"', 
   playlist: '--yes-playlist',
   noPlaylist: '--no-playlist'
 };
@@ -66,9 +66,7 @@ class DownloadQueue {
   }
 
   async processNext() {
-    if (this.activeDownloads >= this.maxConcurrent || this.queue.length === 0) {
-      return;
-    }
+    if (this.activeDownloads >= this.maxConcurrent || this.queue.length === 0) return;
 
     this.activeDownloads++;
     const { task, resolve, reject } = this.queue.shift();
@@ -88,10 +86,12 @@ class DownloadQueue {
 const downloadQueue = new DownloadQueue(config.maxConcurrent);
 
 const cleanCommand = (text) => text.replace(/^\.(dla)\s*/i, "").trim();
+
+// Mejorada la detección de URLs para redes sociales
 const isUrl = (string) => {
   try {
-    new URL(string);
-    return true;
+    const url = new URL(string);
+    return ['http:', 'https:'].includes(url.protocol);
   } catch {
     return false;
   }
@@ -108,14 +108,11 @@ const buildCookiesFlag = async () => {
 
 const safeExecute = async (command, silentError = false) => {
   try {
-    const result = await execPromise(command);
-    return result;
+    return await execPromise(command);
   } catch (error) {
     if (!silentError) {
-      console.error(`PLUGIN DLA Command: ${command}`);
-      console.error(`PLUGIN DLA Error: ${error.message}`);
-      if (error.stdout) console.error(`Stdout: ${error.stdout}`);
-      if (error.stderr) console.error(`Stderr: ${error.stderr}`);
+      console.error(`[❗] DLA Command Error: ${command}`);
+      console.error(`[❗] Detalle: ${error.message}`);
     }
     throw error;
   }
@@ -131,9 +128,7 @@ const isYtDlpAvailable = async () => {
 };
 
 const detectYtDlpBinaryName = () => {
-  const platform = os.platform();
-  const arch = os.arch();
-  const key = `${platform}-${arch}`;
+  const key = `${os.platform()}-${os.arch()}`;
   return ytDlpBinaries.get(key) || ytDlpBinaries.get('default');
 };
 
@@ -145,16 +140,11 @@ const ensureDirectories = async () => {
 };
 
 const detectYtDlpBinary = async (m) => {
-  if (await isYtDlpAvailable()) {
-    return 'yt-dlp';
-  }
-
-  const fileName = detectYtDlpBinaryName();
-  const filePath = path.join(config.ytDlpPath, fileName);
-  
+  if (await isYtDlpAvailable()) return 'yt-dlp';
+  const filePath = path.join(config.ytDlpPath, detectYtDlpBinaryName());
   try {
     await fs.promises.access(filePath);
-    return `${filePath}`;
+    return `"${filePath}"`; // Asegurar comillas en rutas
   } catch {
     return await downloadYtDlp(m);
   }
@@ -168,75 +158,30 @@ const downloadYtDlp = async (m) => {
 
   try {
     await safeExecute(`curl -L -o "${filePath}" "${downloadUrl}"`);
-    
-    if (os.platform() !== 'win32') {
-      await fs.promises.chmod(filePath, '755');
-    }
-    
-    return `${filePath}`;
+    if (os.platform() !== 'win32') await fs.promises.chmod(filePath, '755');
+    return `"${filePath}"`;
   } catch (error) {
     const { default: fetch } = await import('node-fetch');
-    
     const response = await fetch(downloadUrl);
-    if (!response.ok) throw new Error(`Descarga fallida: ${response.statusText}`);
-
+    if (!response.ok) throw new Error(`Fallo de descarga: ${response.statusText}`);
     const buffer = Buffer.from(await response.arrayBuffer());
     await fs.promises.writeFile(filePath, buffer);
-
-    if (os.platform() !== 'win32') {
-      await fs.promises.chmod(filePath, '755');
-    }
-
-    return `${filePath}`;
+    if (os.platform() !== 'win32') await fs.promises.chmod(filePath, '755');
+    return `"${filePath}"`;
   }
 };
 
 const updateYtDlp = async (m, errorMsg = null) => {
   try {
     const ytDlpPath = await detectYtDlpBinary(m);
-    const updateCommand = `${ytDlpPath} --update-to master`; // nightly
-    
+    const updateCommand = `${ytDlpPath} --update-to master`;
     const result = await safeExecute(updateCommand);
-    
-    const updateOutput = result.stdout || result.stderr || 'yt-dlp actualizado exitosamente';
-    const finalMsg = errorMsg ? `Stderr: ${errorMsg}\n\n${updateOutput}` : updateOutput;
-    await m.reply(finalMsg);
-    
+    const updateOutput = result.stdout || result.stderr || '✅ yt-dlp actualizado exitosamente';
+    await m.reply(errorMsg ? `Intentando solucionar error...\n${updateOutput}` : updateOutput);
     return true;
   } catch (error) {
-    console.error(`PLUGIN DLA Update error: ${error.message}`);
-    const errorOutput = error.stdout || error.stderr || `Error al actualizar: ${error.message}`;
-    const finalMsg = errorMsg ? `Stderr: ${errorMsg}\n\n${errorOutput}` : errorOutput;
-    await m.reply(finalMsg);
+    await m.reply(`❌ Error al actualizar dependencias: ${error.message}`);
     return false;
-  }
-};
-
-const uploadCookies = async (m, cookieText = null) => {
-  try {
-    let cookieContent = null;
-
-    if (cookieText) {
-      cookieContent = cookieText;
-    } else if (m.quoted && m.quoted.fileSha256) {
-      const media = await m.quoted.download();
-      if (!media) {
-        await m.reply('Error al descargar el archivo de cookies');
-        return;
-      }
-      cookieContent = media.toString();
-    } else {
-      await m.reply('Las cookies deben ser texto o archivo. Ver el tutorial aqui: https://youtu.be/KUk9nEf00_U');
-      return;
-    }
-
-    await ensureDirectories();
-    await fs.promises.writeFile(config.cookiesFile, cookieContent);
-    
-    await m.reply(`Cookies subidas exitosamente en ${config.cookiesFile}`);
-  } catch (error) {
-    console.error(`PLUGIN DLA Cookie upload error: ${error.message}`);
-    await m.reply(`Error subiendo cookies: ${error.message}`);
   }
 };
 
@@ -245,21 +190,29 @@ const processDownloadedFile = async (m, filePath, originalFileName, isVideo = fa
     await fs.promises.access(filePath);
     
     if (isVideo) {
-      await conn.sendMessage(m.chat, { video: { url: filePath }, mimetype: "video/mp4" }, { quoted: m });
+      await conn.sendMessage(m.chat, { 
+        video: { url: filePath }, 
+        caption: `🎬 Descarga completada`, 
+        mimetype: "video/mp4" 
+      }, { quoted: m });
     } else {
-      await conn.sendMessage(m.chat, { audio: { url: filePath }, mimetype: "audio/mpeg" }, { quoted: m });
+      await conn.sendMessage(m.chat, { 
+        audio: { url: filePath }, 
+        mimetype: "audio/mp4", 
+        ptt: false // Cambia a 'true' si quieres que se envíe como Nota de Voz 🎤
+      }, { quoted: m });
     }
 
     await fs.promises.unlink(filePath).catch(() => {});
   } catch (error) {
-    console.error(`PLUGIN DLA Error procesando archivo ${filePath}: ${error.message}`);
+    console.error(`[❗] Error enviando el archivo: ${error.message}`);
     throw error;
   }
 };
 
-const downloadWithYtDlp = async (m, urls, customOptions = '', enablePlaylist = false, isVideo = false) => {
+const downloadWithYtDlp = async (m, url, customOptions = '', enablePlaylist = false, isVideo = false) => {
   const ytDlpPath = await detectYtDlpBinary(m);
-  const sessionId = `yt-dlp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const sessionId = `dl_${Date.now()}`;
   const outputDir = path.join(config.tempDir, sessionId);
   const cookiesFlag = await buildCookiesFlag();
 
@@ -267,51 +220,42 @@ const downloadWithYtDlp = async (m, urls, customOptions = '', enablePlaylist = f
   await fs.promises.mkdir(outputDir, { recursive: true });
 
   try {
-    for (const url of urls) {
-      const outputTemplate = path.join(outputDir, '%(title).20s.%(ext)s');
-      const playlistFlag = enablePlaylist ? formats.playlist : formats.noPlaylist;
-      const playlistItemsFlag = enablePlaylist ? `--playlist-items 1:${config.playlistLimit}` : '';
-      
-      const command = [
-        ytDlpPath,
-        `--max-filesize ${config.maxFileSize}`,
-        commonFlags,
-        playlistFlag,
-        playlistItemsFlag,
-        cookiesFlag,
-        customOptions,
-        `-o "${outputTemplate}"`,
-        `"${url}"`
-      ].filter(Boolean).join(' ');
+    const outputTemplate = path.join(outputDir, '%(title).50s.%(ext)s');
+    const playlistFlag = enablePlaylist ? formats.playlist : formats.noPlaylist;
+    const playlistItemsFlag = enablePlaylist ? `--playlist-items 1:${config.playlistLimit}` : '';
+    
+    const command = [
+      ytDlpPath,
+      `--max-filesize ${config.maxFileSize}`,
+      commonFlags,
+      playlistFlag,
+      playlistItemsFlag,
+      cookiesFlag,
+      customOptions,
+      `-o "${outputTemplate}"`,
+      `"${url}"`
+    ].filter(Boolean).join(' ');
 
-      try {
-        await safeExecute(command);
-        
-        const files = await fs.promises.readdir(outputDir);
-        
-        for (const file of files) {
-          const fullPath = path.join(outputDir, file);
-          
-          try {
-            await processDownloadedFile(m, fullPath, file, isVideo);
-          } catch (processError) {
-            console.error(`PLUGIN DLA Error procesando archivo ${file}: ${processError.message}`);
-          }
-        }
-      } catch (error) {
-        const errorMsg = error.stderr || error.message || 'Error desconocido';
-        await updateYtDlp(m, errorMsg);
-      }
+    await safeExecute(command);
+    const files = await fs.promises.readdir(outputDir);
+    
+    if (files.length === 0) throw new Error("No se pudo descargar el archivo.");
+
+    for (const file of files) {
+      await processDownloadedFile(m, path.join(outputDir, file), file, isVideo);
     }
+  } catch (error) {
+    const errorMsg = error.stderr || error.message || 'Error desconocido';
+    console.error(`[❗] Error de descarga: ${errorMsg}`);
+    await m.reply(`❌ Ocurrió un error al descargar. Asegúrate de que el enlace sea público.`);
   } finally {
-    await fs.promises.rm(outputDir, { recursive: true, force: true }).catch((err) => {
-      console.error(`PLUGIN DLA Error limpiando directorio temporal: ${err.message}`);
-    });
+    await fs.promises.rm(outputDir, { recursive: true, force: true }).catch(() => {});
   }
 };
 
 const searchAndDownload = async (m, searchQuery, isVideo = false) => {
-  const sessionId = `yt-dlp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const ytDlpPath = await detectYtDlpBinary(m);
+  const sessionId = `search_${Date.now()}`;
   const outputDir = path.join(config.tempDir, sessionId);
   const cookiesFlag = await buildCookiesFlag();
   
@@ -319,63 +263,33 @@ const searchAndDownload = async (m, searchQuery, isVideo = false) => {
   await fs.promises.mkdir(outputDir, { recursive: true });
 
   try {
-    const outputTemplate = path.join(outputDir, '%(title).20s.%(ext)s');
-    const ytDlpPath = await detectYtDlpBinary(m);
-    
+    const outputTemplate = path.join(outputDir, '%(title).50s.%(ext)s');
     const formatOptions = isVideo ? formats.video : formats.audio;
     
-    const searchSources = [
-      { source: 'ytsearch', name: 'YouTube' },
-      ...(isVideo ? [] : [
-          { source: 'scsearch', name: 'SoundCloud' },
-          { source: 'nicosearch', name: 'NicoNico' }
-      ])
-    ];
-
-    let success = false;
-
-    for (const { source, name } of searchSources) {
-      if (success) break;
-
-      try {
-        const command = [
-          ytDlpPath,
-          `--max-filesize ${config.maxFileSize}`,
-          commonFlags,
-          '--playlist-items 1',
-          formatOptions,
-          cookiesFlag,
-          `-o "${outputTemplate}"`,
-          `"${source}10:${searchQuery}"`
-        ].filter(Boolean).join(' ');
-        
-        await safeExecute(command);
-
-        const files = await fs.promises.readdir(outputDir);
-        
-        if (files.length > 0) {
-          await Promise.all(
-            files.map(file => processDownloadedFile(m, path.join(outputDir, file), file, isVideo))
-          );
-          success = true;
-          break;
-        }
-      } catch (error) {
-        const errorMsg = error.stderr || error.message || 'Error desconocido';
-        await updateYtDlp(m, errorMsg);
-        
-        await fs.promises.rm(outputDir, { recursive: true, force: true }).catch(() => {});
-        await fs.promises.mkdir(outputDir, { recursive: true });
-      }
+    const command = [
+      ytDlpPath,
+      `--max-filesize ${config.maxFileSize}`,
+      commonFlags,
+      '--playlist-items 1',
+      formatOptions,
+      cookiesFlag,
+      `-o "${outputTemplate}"`,
+      `"ytsearch1:${searchQuery}"` // Limitamos a 1 resultado directamente para mayor velocidad
+    ].filter(Boolean).join(' ');
+    
+    await safeExecute(command);
+    const files = await fs.promises.readdir(outputDir);
+    
+    if (files.length > 0) {
+      await processDownloadedFile(m, path.join(outputDir, files[0]), files[0], isVideo);
+    } else {
+      await m.reply("❌ No se encontraron resultados para tu búsqueda.");
     }
-
-    if (!success) {
-      console.error(`PLUGIN DLA No se encontraron resultados para ${searchQuery}`);
-    }
+  } catch (error) {
+    console.error(`[❗] Error de búsqueda: ${error.message}`);
+    await m.reply(`❌ Hubo un problema procesando tu búsqueda.`);
   } finally {
-    await fs.promises.rm(outputDir, { recursive: true, force: true }).catch((err) => {
-      console.error(`PLUGIN DLA Error limpiando directorio temporal: ${err.message}`);
-    });
+    await fs.promises.rm(outputDir, { recursive: true, force: true }).catch(() => {});
   }
 };
 
@@ -383,76 +297,47 @@ const handleRequest = async (m) => {
   const input = cleanCommand(m.text.trim());
   
   if (!input) {
-    await m.reply(
-      '> 🎶Buscar y descargar cancion:\n`dla` <consulta>\n' +
-      '> 🎥Buscar y descargar video:\n`dla vd` <consulta>\n' +
-      '> ⬇️Descargar todo tipo de media: \n`dla` <url> _YT-DLP FLAGS_ \n' +
-      '> 🎵Descargar todo el audio de playlist: \n`dla mp3` <url> \n' +
-      '> 🍪Cookies: https://youtu.be/KUk9nEf00_U \n' +
-      '> 🌐Mas informacion:\ngithub.com/yt-dlp/yt-dlp/blob/master/README.md#usage-and-options'
+    return await m.reply(
+      '> 🎶 *Descargar Canción:* \n`dla <nombre o link>`\n\n' +
+      '> 🎬 *Descargar Video:* \n`dla vd <nombre o link>`\n\n' +
+      '> 🎵 *Descargar Playlist (Audio):* \n`dla mp3 <link>`'
     );
-    return;
   }
 
   try {
-    const args = input.match(/[^\s"]+|"([^"]*)"/g)?.map(arg => 
-      arg.startsWith('"') && arg.endsWith('"') ? arg.slice(1, -1) : arg
-    ) || [];
-
-    const command = args[0];
-    const remainingArgs = args.slice(1);
-    const urls = remainingArgs.filter(arg => isUrl(arg));
-
-    if (command === 'cookies') {
-      const cookiesIndex = input.toLowerCase().indexOf('cookies');
-      if (cookiesIndex !== -1) {
-        const cookieText = input.substring(cookiesIndex + 'cookies'.length).trim();
-        await uploadCookies(m, cookieText || null);
-      } else {
-        await uploadCookies(m, null);
-      }
-      return;
-    }
+    const args = input.split(' ').filter(Boolean);
+    const isCommandVd = args[0] === 'vd';
+    const isCommandMp3 = args[0] === 'mp3';
     
-    await m.reply('Descargando!');
-    
-    if (!urls.length) {
-      if (input.includes('://')) {
-        const inputUrl = input.match(/(https?:\/\/[^\s]+)/)?.[1];
-        if (inputUrl) {
-          const options = input.replace(inputUrl, '').trim();
-          await downloadWithYtDlp(m, [inputUrl], `${formats.video} ${options}`, false, true);
-          return;
-        }
-      }
-      if (command === 'vd') {
-        await searchAndDownload(m, remainingArgs.join(' '), true);
-      } else {
-        await searchAndDownload(m, input, false);
-      }
-      return;
+    // Remover el subcomando del input si existe ('vd' o 'mp3')
+    let query = input;
+    if (isCommandVd || isCommandMp3) {
+      query = args.slice(1).join(' ');
     }
 
-    switch (command) {
-      case 'mp3':
-        if (urls.length) {
-          const options = remainingArgs
-            .filter(arg => !isUrl(arg))
-            .join(' ');
-          await downloadWithYtDlp(m, urls, `${formats.audio} ${options}`, true, false);
-        }
-        break;
+    if (!query) return await m.reply("❌ Por favor, proporciona un enlace o término de búsqueda.");
 
-      default:
-        const options = remainingArgs
-          .filter(arg => !isUrl(arg))
-          .join(' ');
-        await downloadWithYtDlp(m, urls, `${formats.video} ${options}`, false, true);
-        break;
+    await m.reply('⏳ *Descargando...* Esto puede tomar unos segundos.');
+
+    // Verificar si es un enlace (IG, TikTok, YouTube, etc) o una búsqueda por texto
+    const urlMatch = query.match(/(https?:\/\/[^\s]+)/);
+    const isLink = urlMatch ? true : false;
+    const finalUrlOrQuery = isLink ? urlMatch[0] : query;
+
+    if (isCommandVd) {
+      if (isLink) await downloadWithYtDlp(m, finalUrlOrQuery, formats.video, false, true);
+      else await searchAndDownload(m, finalUrlOrQuery, true);
+    } else if (isCommandMp3) {
+      if (isLink) await downloadWithYtDlp(m, finalUrlOrQuery, formats.audio, true, false); // true para playlist
+      else await m.reply("❌ El comando `mp3` está diseñado para listas de reproducción mediante enlaces.");
+    } else {
+      // Comportamiento por defecto: Descarga Audio
+      if (isLink) await downloadWithYtDlp(m, finalUrlOrQuery, formats.audio, false, false);
+      else await searchAndDownload(m, finalUrlOrQuery, false);
     }
   } catch (error) {
-    console.error(`PLUGIN DLA Error en comando dla: ${error.message}`);
-    await m.reply(`Error: ${error.message}`);
+    console.error(`[❗] Error crítico: ${error.message}`);
+    await m.reply(`❌ Ocurrió un error inesperado.`);
   }
 };
 
@@ -460,9 +345,10 @@ let handler = (m) => {
   return downloadQueue.add(() => handleRequest(m));
 };
 
-handler.help = ['dla [OPTIONS] URL', 'dla vd <consulta>', 'dla mp3 <url>', 'dla cookies [texto]'];
-handler.tags = ['tools'];
+handler.help = ['dla <link/búsqueda>', 'dla vd <link/búsqueda>', 'dla mp3 <link playlist>'];
+handler.tags = ['tools', 'descargas'];
 handler.command = /^(dla)$/i;
 handler.owner = false;
 
 export default handler;
+                                                           
