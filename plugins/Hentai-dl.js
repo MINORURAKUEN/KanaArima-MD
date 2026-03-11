@@ -4,76 +4,107 @@ import * as cheerio from 'cheerio'
 let handler = async (m, { conn, text, usedPrefix, command }) => {
     if (!text) throw `*⚠️ Ejemplo:* ${usedPrefix}${command} overflow`
     
-    // Nueva URL de búsqueda estándar para TioHentai/TioAnime
-    const baseUrl = `https://tiohentai.com/directorio?b=${encodeURIComponent(text)}`
-
-    // Mensaje de espera
+    // Mensaje inicial
     await conn.sendMessage(m.chat, { 
-        text: `🔞 *Buscando:* _${text}_\n🌐 *Fuente:* _TioHentai_...` 
+        text: `🔞 *Buscando:* _${text}_\n🌐 *Fuentes:* _TioHentai, HentaiLA, LatinoHentai_...` 
     }, { quoted: m })
 
-    try {
-        const { data, request } = await axios.get(baseUrl, {
-            headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
-                'Referer': 'https://tiohentai.com/',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
-            }
-        })
-        
-        const $ = cheerio.load(data)
-        const results = []
+    const query = encodeURIComponent(text)
+    
+    // Lista de proveedores con sus rutas de búsqueda más comunes
+    const sources = [
+        {
+            name: 'TioHentai',
+            url: `https://tiohentai.com/directorio?b=${query}`,
+            domain: 'https://tiohentai.com'
+        },
+        {
+            name: 'HentaiLA TV',
+            url: `https://hentaila.tv/buscar?q=${query}`, 
+            domain: 'https://hentaila.tv'
+        },
+        {
+            name: 'HentaiLA Hub',
+            url: `https://hentaila.com/buscar?q=${query}`,
+            domain: 'https://hentaila.com'
+        },
+        {
+            name: 'LatinoHentai',
+            url: `https://latinohentai.vip/?s=${query}`,
+            domain: 'https://latinohentai.vip'
+        }
+    ]
 
-        // 🟢 CASO 1: El sitio redirigió directo a la página de la serie (ej. /hentai/overflow)
-        const responseUrl = request.res.responseUrl || request.responseURL || ""
-        if (responseUrl.includes('/hentai/')) {
-            let title = $('h1.title').text().trim() || $('h1').text().trim() || text
-            let img = $('.thumb img').attr('src') || $('img').attr('src')
-            let link = responseUrl
-            
-            if (img && !img.startsWith('http')) img = 'https://tiohentai.com' + img
-            results.push({ title, link, img })
-        } 
-        // 🟢 CASO 2: El sitio mostró una lista de resultados de búsqueda
-        else {
-            $('article.anime, .anime').each((i, el) => {
-                if (i < 5) {
-                    let title = $(el).find('h3, .title').text().trim()
+    // Función que extrae la información de una página específica
+    const fetchSource = async (source) => {
+        try {
+            const { data } = await axios.get(source.url, {
+                headers: { 
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+                },
+                timeout: 8000 // Tiempo máximo de espera por sitio (8 segundos)
+            })
+            const $ = cheerio.load(data)
+            let localResults = []
+
+            // Selectores genéricos que funcionan en la mayoría de estas webs
+            $('article, .anime, .post, .item, .capitulo').each((i, el) => {
+                if (localResults.length < 3) { // Extraer máximo 3 resultados por página para no saturar el mensaje
+                    let title = $(el).find('h2, h3, h1, .title').text().trim()
                     let link = $(el).find('a').attr('href')
-                    let img = $(el).find('img').attr('data-src') || $(el).find('img').attr('src')
+                    let img = $(el).find('img').attr('data-src') || $(el).find('img').attr('src') || $(el).find('img').attr('data-lazy-src')
                     
-                    if (title && link) {
-                        if (!link.startsWith('http')) link = 'https://tiohentai.com' + link
-                        if (img && !img.startsWith('http')) img = 'https://tiohentai.com' + img
+                    if (title && link && title.length > 2) {
+                        // Limpiar URLs relativas
+                        if (!link.startsWith('http')) link = source.domain + (link.startsWith('/') ? '' : '/') + link
+                        if (img && !img.startsWith('http')) img = source.domain + (img.startsWith('/') ? '' : '/') + img
                         
-                        results.push({ title, link, img })
+                        localResults.push({ title, link, img, source: source.name })
                     }
                 }
             })
+            return localResults
+        } catch (e) {
+            // Si la página tiene Cloudflare o está caída, la ignora sin crashear el bot
+            console.log(`⚠️ Ignorando ${source.name}: ${e.response ? e.response.status : e.message}`)
+            return [] 
         }
+    }
 
-        // Si no se encontró nada
-        if (results.length === 0) return m.reply(`❌ *No se hallaron coincidencias para:* _${text}_`)
+    try {
+        let allResults = []
+        
+        // Ejecutar todas las búsquedas al mismo tiempo (Concurrencia)
+        const responses = await Promise.all(sources.map(source => fetchSource(source)))
+        
+        // Combinar los resultados de todas las páginas
+        responses.forEach(res => {
+            allResults = allResults.concat(res)
+        })
+
+        // Filtrar vacíos y limitar a los primeros 10 resultados en total
+        allResults = allResults.filter(r => r.title && r.link).slice(0, 10)
+
+        if (allResults.length === 0) return m.reply(`❌ *No se hallaron coincidencias para:* _${text}_\nEs posible que los sitios estén bloqueando la búsqueda temporalmente.`)
 
         // --- DISEÑO DEL RESULTADO ---
-        let caption = `🔞 *TIO-HENTAI SEARCH* 🔞\n`
+        let caption = `🔞 *MULTI-SEARCH HENTAI* 🔞\n`
         caption += `═══════════════════\n\n`
 
-        results.forEach((res, index) => {
-            caption += `*${index + 1}. 🎬 Título:* ${res.title}\n`
+        allResults.forEach((res, index) => {
+            caption += `*${index + 1}. 🎬* ${res.title}\n`
+            caption += `*🏢 Fuente:* ${res.source}\n`
             caption += `*🔗 Enlace:* ${res.link}\n`
             caption += `───────────────────\n\n`
         })
 
-        caption += `💡 _Toca el enlace para ver los detalles._`
+        caption += `💡 _Toca el enlace de tu preferencia para ver los detalles._`
 
         // Enviar imagen del primer resultado si existe
-        if (results[0].img) {
+        if (allResults[0].img) {
             await conn.sendMessage(m.chat, { 
-                image: { url: results[0].img }, 
+                image: { url: allResults[0].img }, 
                 caption: caption.trim() 
             }, { quoted: m })
         } else {
@@ -81,16 +112,8 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         }
 
     } catch (e) {
-        let errCode = e.response ? e.response.status : e.message
-        console.error("❌ Error de búsqueda en TioHentai:", errCode)
-        
-        if (errCode === 403 || errCode === 503) {
-            m.reply(`⚠️ *Error ${errCode}:* El sitio activó la protección anti-bots (Cloudflare).`)
-        } else if (errCode === 404) {
-            m.reply(`⚠️ *Error 404:* La ruta de búsqueda no existe.`)
-        } else {
-            m.reply(`⚠️ *Error:* El sitio no respondió (${errCode}). Intenta más tarde.`)
-        }
+        console.error("Error en Multi-Search:", e)
+        m.reply(`⚠️ *Error general:* Hubo un problema procesando las páginas de búsqueda.`)
     }
 }
 
@@ -99,4 +122,3 @@ handler.tags = ['hentai']
 handler.help = ['descargarH']
 
 export default handler
-
