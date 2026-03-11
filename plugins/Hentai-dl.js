@@ -2,10 +2,9 @@ import axios from 'axios'
 import * as cheerio from 'cheerio'
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
-    if (!text) throw `*⚠️ Ejemplo:* ${usedPrefix}${command} overflow`
+    if (!text) throw `*⚠️ Ejemplo:* ${usedPrefix}${command} joshi luck`
     
     const domain = 'https://latinohentai.vip'
-    // Ruta de búsqueda estándar para LatinoHentai
     const baseUrl = `${domain}/?s=${encodeURIComponent(text)}`
 
     // Mensaje de espera
@@ -23,44 +22,38 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         })
         
         const $ = cheerio.load(data)
-        const results = []
+        let result = null // Cambiamos de array a un solo objeto
 
-        // Selectores amplios para capturar los resultados en LatinoHentai
+        // Buscamos SOLO el primer resultado válido
         $('article, .post, .item, .video-block').each((i, el) => {
-            if (results.length < 5) { // Límite de 5 resultados
+            if (!result) { // Si la variable result está vacía, atrapa el primero
                 let title = $(el).find('h2, h3, h1, .title').text().trim()
                 let link = $(el).find('a').attr('href')
-                // Buscar la imagen en varios atributos posibles
                 let img = $(el).find('img').attr('data-src') || $(el).find('img').attr('src') || $(el).find('img').attr('data-lazy-src')
                 
                 if (title && link) {
-                    // Completar URLs relativas si es necesario
                     if (!link.startsWith('http')) link = domain + (link.startsWith('/') ? '' : '/') + link
                     if (img && !img.startsWith('http')) img = domain + (img.startsWith('/') ? '' : '/') + img
                     
-                    results.push({ title, link, img })
+                    result = { title, link, img } // Guardamos solo este
                 }
             }
         })
 
-        if (results.length === 0) return m.reply(`❌ *No se hallaron coincidencias para:* _${text}_ en LatinoHentai.`)
+        if (!result) return m.reply(`❌ *No se hallaron coincidencias para:* _${text}_ en LatinoHentai.`)
 
-        // --- DISEÑO DEL RESULTADO ---
+        // --- DISEÑO DEL RESULTADO ÚNICO ---
         let caption = `🔞 *LATINO-HENTAI SEARCH* 🔞\n`
         caption += `═══════════════════\n\n`
-
-        results.forEach((res, index) => {
-            caption += `*${index + 1}. 🎬 Título:* ${res.title}\n`
-            caption += `*🔗 Enlace:* ${res.link}\n`
-            caption += `───────────────────\n\n`
-        })
-
+        caption += `*🎬 Título:* ${result.title}\n`
+        caption += `*🔗 Enlace:* ${result.link}\n`
+        caption += `───────────────────\n\n`
         caption += `💡 _Toca el enlace para ver los detalles._`
 
-        // Enviar imagen del primer resultado si existe
-        if (results[0].img) {
+        // Enviar imagen del resultado único
+        if (result.img) {
             await conn.sendMessage(m.chat, { 
-                image: { url: results[0].img }, 
+                image: { url: result.img }, 
                 caption: caption.trim() 
             }, { quoted: m })
         } else {
@@ -70,12 +63,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     } catch (e) {
         let errCode = e.response ? e.response.status : e.message
         console.error("❌ Error de búsqueda en LatinoHentai:", errCode)
-        
-        if (errCode === 403 || errCode === 503) {
-            m.reply(`⚠️ *Error ${errCode}:* LatinoHentai tiene activa su protección anti-bots (Cloudflare) y bloqueó la búsqueda.`)
-        } else {
-            m.reply(`⚠️ *Error:* El sitio no respondió (${errCode}). Intenta más tarde.`)
-        }
+        m.reply(`⚠️ *Error:* El sitio no respondió (${errCode}). Intenta más tarde.`)
     }
 }
 
@@ -84,4 +72,4 @@ handler.tags = ['hentai']
 handler.help = ['descargarH']
 
 export default handler
-        
+
