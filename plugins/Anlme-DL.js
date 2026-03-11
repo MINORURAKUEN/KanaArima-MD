@@ -9,22 +9,21 @@ import { lookup } from 'mime-types';
 
 const handler = async (m, { conn, args, usedPrefix, command }) => {
     const url = args[0];
-    if (!url) throw `*🎬 Uso:* ${usedPrefix + command} <enlace de anime o link directo (Mega, MF, Okru)>`;
+    if (!url) throw `*🎬 Uso:* ${usedPrefix + command} <enlace de anime o link directo>`;
 
     try {
         let downloadUrl = url;
         let finalName = 'video_anime';
         let serverType = ''; 
 
-        // --- 1. DETECCIÓN Y SCRAPING ---
         const isDirect = /mega\.nz|mediafire\.com|ok\.ru/.test(url);
 
         if (!isDirect) {
-            await m.reply(`🔍 *Buscando servidores compatibles...*`);
+            await m.reply(`🔍 *Buscando servidores disponibles...*`);
             const animeData = await extractAnimeLinks(url);
             
-            // Sistema de Prioridad: Mega (si tiene hash) > Ok.ru > MediaFire
-            if (animeData.megaUrl && animeData.megaUrl.includes('#')) {
+            // Verificación segura de servidores encontrados
+            if (animeData.megaUrl && typeof animeData.megaUrl === 'string' && animeData.megaUrl.includes('#')) {
                 downloadUrl = animeData.megaUrl;
                 serverType = 'mega';
             } else if (animeData.okRuUrl) {
@@ -34,7 +33,7 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
                 downloadUrl = animeData.mfUrl;
                 serverType = 'mediafire';
             } else {
-                throw 'No se encontró un servidor compatible con enlace completo (Mega sin llave o servidor no soportado).';
+                throw 'No se encontró un servidor compatible (Mega con llave, Ok.ru o MediaFire) en esta página.';
             }
             finalName = animeData.title;
         } else {
@@ -43,15 +42,15 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
             else if (/ok\.ru/.test(url)) serverType = 'okru';
         }
 
-        // Validación de seguridad para Mega
-        if (serverType === 'mega' && !downloadUrl.includes('#')) {
-            throw 'El enlace de Mega no contiene la llave de cifrado (#hash). Intenta con otro servidor.';
+        // Validación final para enlaces directos de Mega
+        if (serverType === 'mega' && (!downloadUrl || !downloadUrl.includes('#'))) {
+            throw 'El enlace de Mega no tiene llave de cifrado (#hash). Intenta con otro servidor.';
         }
 
-        const tempPath = join(tmpdir(), `${Date.now()}_anime.mp4`);
+        const tempPath = join(tmpdir(), `${Date.now()}_video.mp4`);
         let name, sizeH;
 
-        // --- 2. LÓGICA DE DESCARGA ---
+        // --- INICIO DE DESCARGA ---
         if (serverType === 'mega') {
             const file = File.fromURL(downloadUrl);
             await file.loadAttributes();
@@ -70,62 +69,64 @@ const handler = async (m, { conn, args, usedPrefix, command }) => {
             await pipeline(response.data, fs.createWriteStream(tempPath));
 
         } else if (serverType === 'okru') {
-            await m.reply(`📥 *Procesando video de Ok.ru...*`);
+            await m.reply(`📥 *Obteniendo video de Ok.ru...*`);
             const okData = await okRuDl(downloadUrl);
             name = `${finalName}.mp4`;
-            sizeH = "HD (Ok.ru)";
+            sizeH = "Calidad Máxima";
             const response = await axios({ method: 'get', url: okData.link, responseType: 'stream' });
             await pipeline(response.data, fs.createWriteStream(tempPath));
         }
 
-        // --- 3. SUBIDA A WHATSAPP ---
-        await m.reply(`🚀 *Descarga completa. Enviando a WhatsApp...*`);
+        // --- ENVÍO A WHATSAPP ---
+        await m.reply(`🚀 *Descarga terminada. Enviando a WhatsApp...*`);
         
         await conn.sendMessage(m.chat, { 
             document: { url: tempPath }, 
             fileName: name, 
             mimetype: 'video/mp4',
-            caption: `✅ *Anime:* ${name}\n⚖️ *Tamaño:* ${sizeH}\n🎬 *Servidor:* ${serverType.toUpperCase()}`
+            caption: `✅ *Anime:* ${name}\n🎬 *Servidor:* ${serverType.toUpperCase()}`
         }, { quoted: m });
 
-        // Limpieza de archivos temporales
         if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
 
     } catch (e) {
         console.error(e);
-        const errorText = e.message.includes('no hash') 
-            ? '❌ El enlace de Mega está incompleto (falta el hash #).' 
-            : `❌ *Error:* ${e.message}`;
-        m.reply(errorText);
+        m.reply(`❌ *Error:* ${e.message || e}`);
     }
 };
 
-// --- SCRAPERS DE SERVIDORES ---
+// --- SCRAPERS ---
 
 async function extractAnimeLinks(url) {
-    const { data } = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    const $ = cheerio.load(data);
-    let megaUrl, okRuUrl, mfUrl;
+    try {
+        const { data } = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        const $ = cheerio.load(data);
+        let megaUrl, okRuUrl, mfUrl;
 
-    const scripts = $('script').toArray();
-    for (let script of scripts) {
-        const content = $(script).html();
-        if (content && content.includes('var videos =')) {
-            const match = content.match(/var videos = (\[.*\]);/);
-            if (match) {
-                const videoData = JSON.parse(match[1]);
-                // Intentamos capturar los IDs de los servidores
-                const mega = videoData.find(v => v[0].toLowerCase() === 'mega');
-                const okru = videoData.find(v => v[0].toLowerCase() === 'okru');
-                const mf = videoData.find(v => v[0].toLowerCase() === 'mediafire');
-                
-                if (mega) megaUrl = mega[1].includes('mega.nz') ? mega[1] : `https://mega.nz/#!${mega[1]}`;
-                if (okru) okRuUrl = `https://ok.ru/videoembed/${okru[1]}`;
-                if (mf) mfUrl = mf[1];
+        const scripts = $('script').toArray();
+        for (let script of scripts) {
+            const content = $(script).html();
+            if (content && content.includes('var videos =')) {
+                const match = content.match(/var videos = (\[.*\]);/);
+                if (match) {
+                    const videoData = JSON.parse(match[1]);
+                    const mega = videoData.find(v => v[0].toLowerCase() === 'mega');
+                    const okru = videoData.find(v => v[0].toLowerCase() === 'okru');
+                    const mf = videoData.find(v => v[0].toLowerCase() === 'mediafire');
+                    
+                    if (mega && mega[1]) megaUrl = mega[1].includes('mega.nz') ? mega[1] : `https://mega.nz/#!${mega[1]}`;
+                    if (okru && okru[1]) okRuUrl = `https://ok.ru/videoembed/${okru[1]}`;
+                    if (mf && mf[1]) mfUrl = mf[1];
+                }
             }
         }
+        return { 
+            title: $('h1.title').text().trim() || $('title').text().trim() || 'Anime', 
+            megaUrl, okRuUrl, mfUrl 
+        };
+    } catch {
+        return { title: 'Anime', megaUrl: null, okRuUrl: null, mfUrl: null };
     }
-    return { title: $('h1.title').text().trim() || 'Anime', megaUrl, okRuUrl, mfUrl };
 }
 
 async function okRuDl(url) {
@@ -134,7 +135,6 @@ async function okRuDl(url) {
     const jsonStr = $('div[data-options]').attr('data-options');
     const json = JSON.parse(jsonStr);
     const metadata = JSON.parse(json.flashvars.metadata);
-    // Ordena de mejor a peor calidad y elige la primera
     const videoUrl = metadata.videos.sort((a, b) => parseInt(b.name) - parseInt(a.name))[0].url;
     return { link: videoUrl };
 }
@@ -149,4 +149,4 @@ async function mediafireDl(url) {
 
 handler.command = /^(animedl|amdl|mega|mf|okru)$/i;
 export default handler;
-                
+                        
