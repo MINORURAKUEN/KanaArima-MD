@@ -1,60 +1,68 @@
-import { ogmp3 } from '../src/libraries/youtubedl.js'
 import yts from 'yt-search'
-import fs from 'fs'
+import fetch from 'node-fetch'
 
-const userRequestTimes = new Map()
-const MIN_DELAY = 5000
+const handler = async (m, { conn, text, command }) => {
 
-function checkRateLimit(userId) {
-  const now = Date.now()
-  const last = userRequestTimes.get(userId) || 0
-  const diff = now - last
-  if (diff < MIN_DELAY) {
-    return { allowed: false, wait: Math.ceil((MIN_DELAY - diff) / 1000) }
-  }
-  userRequestTimes.set(userId, now)
-  return { allowed: true, wait: 0 }
+if (!text) throw '❗ Escribe el nombre del video'
+
+let search = await yts(text)
+let video = search.videos[0]
+
+if (!video) throw '❌ No se encontró el video'
+
+let caption = `
+╭━━━〔 🎵 YOUTUBE PLAY 〕━━━⬣
+┃ 📌 Título: ${video.title}
+┃ ⏱ Duración: ${video.timestamp}
+┃ 👀 Vistas: ${video.views}
+┃ 👤 Canal: ${video.author.name}
+┃ 🔗 Link: ${video.url}
+╰━━━━━━━━━━━━━━━━⬣
+`
+
+await conn.sendMessage(m.chat, {
+image: { url: video.thumbnail },
+caption
+}, { quoted: m })
+
+try {
+
+if (command == 'play') {
+
+let api = `https://api.evogb.org/api/yta?url=${video.url}&apikey=evogb-9ivSW7OY`
+let res = await fetch(api)
+let json = await res.json()
+
+await conn.sendMessage(m.chat, {
+audio: { url: json.result.download },
+mimetype: 'audio/mpeg'
+}, { quoted: m })
+
 }
 
-function sanitizeTitle(title) {
-  return title?.replace(/[<>:"/\\|?*]/g, '').substring(0, 50) || 'Audio'
+if (command == 'play2') {
+
+let api = `https://rest.apicausas.xyz/api/ytdl?url=${video.url}&apikey=causa-0e3eacf90ab7be15`
+let res = await fetch(api)
+let json = await res.json()
+
+await conn.sendMessage(m.chat, {
+video: { url: json.result.download },
+caption: video.title
+}, { quoted: m })
+
 }
 
-export default async function handler(sock, m, args) {
-  try {
-    const query = args.join(' ').trim()
-    if (!query) return sock.sendMessage(m.chat, { text: '❗ Escribe el nombre o enlace del video.' }, { quoted: m })
+} catch (e) {
 
-    const rate = checkRateLimit(m.sender)
-    if (!rate.allowed) {
-      return sock.sendMessage(m.chat, {
-        text: `⏳ Espera *${rate.wait}s* antes de usar este comando otra vez.`
-      }, { quoted: m })
-    }
+conn.reply(m.chat, '❌ Error con la API, intenta otra vez', m)
 
-    const videoId = ogmp3.isUrl(query) ? ogmp3.youtube(query) : null
-    const search = videoId ? await yts.search(`https://youtu.be/${videoId}`) : await yts.search(query)
-    const video = search.videos[0]
-    const url = video.url
+}
 
-    await sock.sendMessage(m.chat, {
-      image: { url: video.thumbnail },
-      caption: `🎵 *Descargando audio...*\n\n📌 *Título:* ${sanitizeTitle(video.title)}\n⏱️ *Duración:* ${video.timestamp}`
-    }, { quoted: m })
+}
 
-    const res = await ogmp3.download(url, '320', 'audio')
-    if (!res.status) throw res.error || 'Error descargando audio'
+handler.help = ['play', 'play2']
+handler.tags = ['downloader']
+handler.command = ['play','play2']
 
-    await sock.sendMessage(m.chat, {
-      audio: { url: res.result.download },
-      mimetype: 'audio/mpeg',
-      fileName: `${sanitizeTitle(res.result.title)}.mp3`
-    }, { quoted: m })
-
-  } catch (e) {
-    console.error('❌ Error en /play:', e)
-    sock.sendMessage(m.chat, {
-      text: `❌ Error descargando audio:\n${typeof e === 'string' ? e : e.message}`
-    }, { quoted: m })
-  }
-              }
+export default handler
