@@ -2,35 +2,43 @@ import axios from 'axios'
 import * as cheerio from 'cheerio'
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
-    // Si el usuario no escribe nada, muestra el ejemplo que pediste
-    if (!text) throw `*⚠️ Ejemplo:* ${usedPrefix}${command} joshi luck`
+    if (!text) throw `*⚠️ Ejemplo:* ${usedPrefix}${command} overflow`
     
     const baseUrl = `https://tiohentai.com/buscar?s=${encodeURIComponent(text)}`
-    const providerName = 'TioHentai'
 
-    // Mensaje de espera con estética limpia
+    // Mensaje de espera
     await conn.sendMessage(m.chat, { 
-        text: `🔞 *Buscando:* _${text}_\n🌐 *Fuente:* _${providerName}_...` 
+        text: `🔞 *Buscando:* _${text}_\n🌐 *Fuente:* _TioHentai_...` 
     }, { quoted: m })
 
     try {
+        // Cabeceras avanzadas para saltar protecciones Anti-Bot sencillas
         const { data } = await axios.get(baseUrl, {
             headers: { 
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+                'Referer': 'https://tiohentai.com/',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'same-origin',
+                'Sec-Fetch-User': '?1'
             }
         })
+        
         const $ = cheerio.load(data)
         const results = []
 
-        // Selectores optimizados para la estructura de TioHentai
-        $('article.anime, .thumb, .hentai').each((i, el) => {
-            if (i < 5) {
-                let title = $(el).find('h3, .title, h2').text().trim()
+        // Selectores optimizados (con soporte para lazy loading en imágenes)
+        $('article.anime').each((i, el) => {
+            if (i < 5) { // Límite de 5 resultados
+                let title = $(el).find('h3, .title').text().trim()
                 let link = $(el).find('a').attr('href')
-                let img = $(el).find('img').attr('src')
+                let img = $(el).find('img').attr('data-src') || $(el).find('img').attr('src')
                 
                 if (title && link) {
-                    // Normalizar enlaces e imágenes
                     if (!link.startsWith('http')) link = 'https://tiohentai.com' + link
                     if (img && !img.startsWith('http')) img = 'https://tiohentai.com' + img
                     
@@ -53,7 +61,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
         caption += `💡 _Toca el enlace para ver los detalles._`
 
-        // Enviar imagen del primer resultado (si existe)
+        // Enviar imagen del primer resultado
         if (results[0].img) {
             await conn.sendMessage(m.chat, { 
                 image: { url: results[0].img }, 
@@ -64,14 +72,23 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         }
 
     } catch (e) {
-        console.error(e)
-        m.reply('⚠️ *Error:* El sitio no respondió. Verifica tu conexión o intenta más tarde.')
+        // Manejo de errores detallado para depuración
+        let errCode = e.response ? e.response.status : e.message
+        console.error("❌ Error de búsqueda en TioHentai:", errCode)
+        
+        if (errCode === 403 || errCode === 503) {
+            m.reply(`⚠️ *Error ${errCode}:* El sitio activó Cloudflare y bloqueó al bot. Revisa la consola.`)
+        } else if (errCode === 404) {
+            m.reply(`⚠️ *Error 404:* La URL de búsqueda de la página cambió.`)
+        } else {
+            m.reply(`⚠️ *Error:* El sitio no respondió (${errCode}). Intenta más tarde.`)
+        }
     }
 }
 
-// Configuración de comando y tags
 handler.command = /^(descargarH)$/i
 handler.tags = ['hentai']
 handler.help = ['descargarH']
 
 export default handler
+
