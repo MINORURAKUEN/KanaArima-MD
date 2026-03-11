@@ -1,16 +1,33 @@
+import fs from "fs";
+import path from "path";
+import { exec } from "child_process";
+import { promisify } from "util";
+import os from "os";
 import axios from 'axios';
 import crypto from 'crypto';
 
+const execPromise = promisify(exec);
+
+const config = {
+  tempDir: process.env.TEMP_DOWNLOAD_DIR || path.join(process.cwd(), 'src/tmp/YTDLP'),
+  maxFileSize: (parseInt(process.env.MAX_UPLOAD, 10) * 1048576) || 1500000000,
+  ytDlpPath: path.join(process.cwd(), 'src/tmp/YTDLP'),
+  maxConcurrent: parseInt(process.env.MAXSOLICITUD, 10) || 5,
+  playlistLimit: parseInt(process.env.PLAYLIST_LIMIT, 10) || 10,
+  cookiesFile: path.join(process.cwd(), 'src/tmp/YTDLP/cookies.txt')
+};
+
+const APIS = {
+  evogb: { base: 'https://api.evogb.org', key: 'evogb-9ivSW7OY' },
+  apicausas: { base: 'https://rest.apicausas.xyz', key: 'causa-0e3eacf90ab7be15' }
+};
+
+// --- OBJETO OGMP3 INTEGRADO ---
 const ogmp3 = {
   api: {
     base: "https://api3.apiapi.lat",
-    endpoints: {
-      a: "https://api5.apiapi.lat",
-      b: "https://api.apiapi.lat",
-      c: "https://api3.apiapi.lat"
-    }
+    endpoints: ["https://api5.apiapi.lat", "https://api.apiapi.lat", "https://api3.apiapi.lat"]
   },
-
   headers: {
     'authority': 'api.apiapi.lat',
     'content-type': 'application/json',
@@ -18,297 +35,110 @@ const ogmp3 = {
     'referer': 'https://ogmp3.lat/',
     'user-agent': 'Postify/1.0.0'
   },
- 
-  formats: {
-    video: ['240', '360', '480', '720', '1080'],
-    audio: ['64', '96', '128', '192', '256', '320']
-  },
-
-  default_fmt: {
-    video: '720',
-    audio: '320'
-  },
-
-  restrictedTimezones: new Set(["-330", "-420", "-480", "-540"]),
-
   utils: {
-    hash: () => {
-      const array = new Uint8Array(16);
-      crypto.getRandomValues(array);
-      return Array.from(array, byte => byte.toString(16).padStart(2, "0")).join("");
-    },
-
-    encoded: (str) => {
-      let result = "";
-      for (let i = 0; i < str.length; i++) {
-        result += String.fromCharCode(str.charCodeAt(i) ^ 1);
-      }
-      return result;
-    },
-
-    enc_url: (url, separator = ",") => {
-      const codes = [];
-      for (let i = 0; i < url.length; i++) {
-        codes.push(url.charCodeAt(i));
-      }
-      return codes.join(separator).split(separator).reverse().join(separator);
-    }
+    hash: () => crypto.randomBytes(16).toString('hex'),
+    encoded: (str) => str.split('').map(c => String.fromCharCode(c.charCodeAt(0) ^ 1)).join(''),
+    enc_url: (url) => url.split('').map(c => c.charCodeAt(0)).reverse().join(',')
   },
-
-  isUrl: str => {
+  youtubeId: url => {
+    const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|shorts\/))([a-zA-Z0-9_-]{11})/);
+    return match ? match[1] : null;
+  },
+  async request(endpoint, data = {}) {
+    const base = this.api.endpoints[Math.floor(Math.random() * this.api.endpoints.length)];
     try {
-      const url = new URL(str);
-      const hostname = url.hostname.toLowerCase();
-      const b = [/^(.+\.)?youtube\.com$/, /^(.+\.)?youtube-nocookie\.com$/, /^youtu\.be$/];
-      return b.some(a => a.test(hostname)) && !url.searchParams.has("playlist");
-    } catch (_) {
-      return false;
-    }
+      const res = await axios.post(`${base}${endpoint}`, data, { headers: this.headers });
+      return { status: true, data: res.data };
+    } catch (e) { return { status: false, error: e.message }; }
   },
+  async download(link, isVideo = false) {
+    const id = this.youtubeId(link);
+    if (!id) return null;
+    const type = isVideo ? 'video' : 'audio';
+    const format = isVideo ? '720' : '320';
 
-  youtube: url => {
-    if (!url) return null;
-    const b = [
-      /youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/,
-      /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
-      /youtube\.com\/v\/([a-zA-Z0-9_-]{11})/,
-      /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
-      /youtu\.be\/([a-zA-Z0-9_-]{11})/
-    ];
-    for (let a of b) {
-      if (a.test(url)) return url.match(a)[1];
-    }
-    return null;
-  },
-
-  request: async (endpoint, data = {}, method = 'post') => {
-    try {
-      const ae = Object.values(ogmp3.api.endpoints);
-      const be = ae[Math.floor(Math.random() * ae.length)];
-      
-      const fe = endpoint.startsWith('http') ? endpoint : `${be}${endpoint}`;
-
-      const { data: response } = await axios({
-        method,
-        url: fe,
-        data: method === 'post' ? data : undefined,
-        headers: ogmp3.headers
-      });
-      return {
-        status: true,
-        code: 200,
-        data: response
-      };
-    } catch (error) {
-      return {
-        status: false,
-        code: error.response?.status || 500,
-        error: error.message
-      };
-    }
-  },
-
-  async checkStatus(id) {
-    try {
+    for (let i = 0; i < 5; i++) { // Reintentos
       const c = this.utils.hash();
       const d = this.utils.hash();
-      const endpoint = `/${c}/status/${this.utils.encoded(id)}/${d}/`;
-
-      const response = await this.request(endpoint, {
-        data: id
+      const res = await this.request(`/${c}/init/${this.utils.enc_url(link)}/${d}/`, {
+        data: this.utils.encoded(link),
+        format: isVideo ? "1" : "0",
+        mp3Quality: isVideo ? null : format,
+        mp4Quality: isVideo ? format : null,
       });
 
-      return response;
-    } catch (error) {
-      return {
-        status: false,
-        code: 500,
-        error: error.message
-      };
-    }
-  },
-
-  async checkProgress(data) {
-    try {
-      let attempts = 0;
-      let maxAttempts = 300;
-
-      while (attempts < maxAttempts) {
-        attempts++;
-
-        const res = await this.checkStatus(data.i);
-        if (!res.status) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          continue;
-        }
-
-        const stat = res.data;
-        if (stat.s === "C") {
-          return stat;
-        }
-
-        if (stat.s === "P") {
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          continue;
-        }
-
-        return null;
-      }
-
-      return null;
-    } catch (error) {
-      return null;
-    }
-  },
-
-  download: async (link, format, type = 'video') => {
-    if (!link) {
-      return {
-        status: false,
-        code: 400,
-        error: "¿Que es lo que descarga? ingresa en link idiota"
-      };
-    }
-
-    if (!ogmp3.isUrl(link)) {
-      return {
-        status: false,
-        code: 400,
-        error: "Ese link es invalido pon en link de un video de youtube valido idiotas 🗿"
-      };
-    }
-
-    if (type !== 'video' && type !== 'audio') {
-      return {
-        status: false,
-        code: 400,
-        error: "Elejir video o audio?"
-      };
-    }
-
-    if (!format) {
-      format = type === 'audio' ? ogmp3.default_fmt.audio : ogmp3.default_fmt.video;
-    }
-
-    const valid_fmt = type === 'audio' ? ogmp3.formats.audio : ogmp3.formats.video;
-    if (!valid_fmt.includes(format)) {
-      return {
-        status: false,
-        code: 400,
-        error: `Formato ${format} no es valido para ${type} pero puedes elegir unos de estos: ${valid_fmt.join(', ')}`
-      };
-    }
-
-    const id = ogmp3.youtube(link);
-    if (!id) {
-      return {
-        status: false,
-        code: 400,
-        error: "Donde pito esta la ID del video? no puedo extraerlo hdp"
-      };
-    }
-
-    try {
-      let retries = 0;
-      const maxRetries = 20;
-
-      while (retries < maxRetries) {
-        retries++;
-        const c = ogmp3.utils.hash();
-        const d = ogmp3.utils.hash();
-        const req = {
-          data: ogmp3.utils.encoded(link),
-          format: type === 'audio' ? "0" : "1",
-          referer: "https://ogmp3.cc",
-          mp3Quality: type === 'audio' ? format : null,
-          mp4Quality: type === 'video' ? format : null,
-          userTimeZone: new Date().getTimezoneOffset().toString()
+      if (res.status && res.data.s === "C") {
+        return {
+          title: res.data.t || 'Download',
+          url: `${this.api.base}/${this.utils.hash()}/download/${this.utils.encoded(res.data.i)}/${this.utils.hash()}/`
         };
-
-        const resx = await ogmp3.request(
-          `/${c}/init/${ogmp3.utils.enc_url(link)}/${d}/`,
-          req
-        );
-
-        if (!resx.status) {
-          if (retries === maxRetries) return resx;
-          continue;
-        }
-
-        const data = resx.data;
-        if (data.le) {
-          return {
-            status: false,
-            code: 400,
-            error: "La duración del video es demasiado larga, amigo. El máximo es de 3 horas, no puedes superar eso, ¿entendido? 👍🏻"
-          };
-        }
-
-        if (data.i === "blacklisted") {
-          const limit = ogmp3.restrictedTimezones.has(new Date().getTimezoneOffset().toString()) ? 5 : 100;
-          return {
-            status: false,
-            code: 429,
-            error: `Limite de descargas diarias (${limit}) alcanzados, intente de nuevo mas tardes.`
-          };
-        }
-
-        if (data.e || data.i === "invalid") {
-          return {
-            status: false,
-            code: 400,
-            error: "El video no existe, idiota. No sé si fue eliminado o si YouTube lo restringió... no tengo idea 🤷🏻"
-          };
-        }
-
-        if (data.s === "C") {
-          return {
-            status: true,
-            code: 200,
-            result: {
-              title: data.t || "Kagak tau",
-              type: type,
-              format: format,
-              thumbnail: `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
-              download: `${ogmp3.api.base}/${ogmp3.utils.hash()}/download/${ogmp3.utils.encoded(data.i)}/${ogmp3.utils.hash()}/`,
-              id: id,
-              quality: format
-            }
-          };
-        }
-
-        const prod = await ogmp3.checkProgress(data);
-        if (prod && prod.s === "C") {
-          return {
-            status: true,
-            code: 200,
-            result: {
-              title: prod.t || "Kagak tau",
-              type: type,
-              format: format,
-              thumbnail: `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
-              download: `${ogmp3.api.base}/${ogmp3.utils.hash()}/download/${ogmp3.utils.encoded(prod.i)}/${ogmp3.utils.hash()}/`,
-              id: id,
-              quality: format
-            }
-          };
-        }
       }
-
-      return {
-        status: false,
-        code: 500,
-        error: "Estoy exhausto, idiota... Ya intenté hacer la solicitud varias veces y sigue sin funcionar, así que dejaré la solicitud para más tarde, ¡hasta luego! 😂"
-      };
-
-    } catch (error) {
-      return {
-        status: false,
-        code: 500,
-        error: error.message
-      };
+      await new Promise(r => setTimeout(r, 1500));
     }
+    return null;
   }
 };
 
-export { ogmp3 };
+// --- LÓGICA DE BÚSQUEDA ACTUALIZADA CON OGMP3 ---
+const searchAndDownload = async (m, searchQuery, isVideo = false) => {
+  const sessionId = `dl_${Date.now()}`;
+  const outputDir = path.join(config.tempDir, sessionId);
+  await fs.promises.mkdir(outputDir, { recursive: true });
+
+  try {
+    const { default: fetch } = await import('node-fetch');
+    let downloadUrl = null;
+    let title = "video";
+
+    // 1. Intentar con EvoGB
+    try {
+      const res = await fetch(`${APIS.evogb.base}/download?query=${encodeURIComponent(searchQuery)}&type=${isVideo?'video':'audio'}&apikey=${APIS.evogb.key}`);
+      const data = await res.json();
+      if (data.status && data.result?.url) {
+        downloadUrl = data.result.url;
+        title = data.result.title;
+      }
+    } catch (e) {}
+
+    // 2. Si falla, intentar con OGMP3 (Solo si es enlace de YT o si buscamos y obtenemos el link de YT localmente)
+    if (!downloadUrl) {
+      const ytLink = searchQuery.startsWith('http') ? searchQuery : await getFirstYoutubeResult(searchQuery);
+      if (ytLink) {
+        const resOg = await ogmp3.download(ytLink, isVideo);
+        if (resOg) {
+          downloadUrl = resOg.url;
+          title = resOg.title;
+        }
+      }
+    }
+
+    // 3. Descarga final del buffer
+    if (downloadUrl) {
+      const fileName = `${title.substring(0,20)}.${isVideo?'mp4':'mp3'}`;
+      const filePath = path.join(outputDir, fileName);
+      const fileRes = await fetch(downloadUrl);
+      await fs.promises.writeFile(filePath, Buffer.from(await fileRes.arrayBuffer()));
+      await processDownloadedFile(m, filePath, fileName, isVideo);
+      return;
+    }
+
+    // 4. Fallback a YT-DLP local
+    await downloadWithYtDlp(m, [searchQuery.startsWith('http') ? searchQuery : `ytsearch1:${searchQuery}`], isVideo ? formats.video : formats.audio, false, isVideo);
+
+  } catch (error) {
+    await m.reply(`Error: ${error.message}`);
+  } finally {
+    await fs.promises.rm(outputDir, { recursive: true, force: true }).catch(() => {});
+  }
+};
+
+// Función auxiliar para obtener el primer link de YouTube si es búsqueda de texto
+async function getFirstYoutubeResult(query) {
+  try {
+    const { stdout } = await execPromise(`yt-dlp --get-id "ytsearch1:${query}"`);
+    return `https://www.youtube.com/watch?v=${stdout.trim()}`;
+  } catch { return null; }
+}
+
+// ... (Resto de funciones: ensureDirectories, processDownloadedFile, handler, etc.)
+    
