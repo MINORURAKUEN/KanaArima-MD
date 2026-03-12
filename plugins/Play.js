@@ -2,67 +2,65 @@ import yts from 'yt-search'
 import fetch from 'node-fetch'
 
 const handler = async (m, { conn, text, command }) => {
+    if (!text) throw `❗ *Ingresa el nombre o link*\n\nEjemplo: .${command} Blinding Lights`
 
-if (!text) throw '❗ Escribe el nombre del video'
+    try {
+        const search = await yts(text)
+        const video = search.videos[0]
+        if (!video) throw '❌ No se encontró el video.'
 
-let search = await yts(text)
-let video = search.videos[0]
+        const caption = `╭━━━〔 🎵 YOUTUBE 〕━━━⬣\n┃ 📌 *Título:* ${video.title}\n┃ 🔗 *Link:* ${video.url}\n╰━━━━━━━━━━━━━━━━⬣`
+        
+        await conn.sendMessage(m.chat, { image: { url: video.thumbnail }, caption }, { quoted: m })
+        await m.react('⏳')
 
-if (!video) throw '❌ No se encontró el video'
+        let downloadUrl = null
+        const isVideo = command === 'play2'
 
-let caption = `
-╭━━━〔 🎵 YOUTUBE PLAY 〕━━━⬣
-┃ 📌 Título: ${video.title}
-┃ ⏱ Duración: ${video.timestamp}
-┃ 👀 Vistas: ${video.views}
-┃ 👤 Canal: ${video.author.name}
-┃ 🔗 Link: ${video.url}
-╰━━━━━━━━━━━━━━━━⬣
-`
+        // --- LISTA DE APIS PARA PROBAR ---
+        const apiList = [
+            `https://api.evogb.org/api/${isVideo ? 'ytdl' : 'yta'}?url=${video.url}&apikey=evogb-9ivSW7OY`,
+            `https://rest.apicausas.xyz/api/ytdl?url=${video.url}&apikey=causa-0e3eacf90ab7be15`,
+            `https://api.zenkey.my.id/api/download/yt${isVideo ? 'mp4' : 'mp3'}?url=${video.url}` 
+        ]
 
-await conn.sendMessage(m.chat, {
-image: { url: video.thumbnail },
-caption
-}, { quoted: m })
+        // --- LÓGICA DE FALLBACK ---
+        for (let api of apiList) {
+            try {
+                let res = await fetch(api)
+                let json = await res.json()
+                // Intentamos extraer el link de descarga según el formato de cada API
+                downloadUrl = json.result?.download || json.result?.url || json.url || json.data?.url
+                if (downloadUrl) break // Si obtuvimos link, salimos del bucle
+            } catch (err) {
+                continue // Si esta API falla, salta a la siguiente
+            }
+        }
 
-try {
+        if (!downloadUrl) throw 'Ninguna API pudo procesar la descarga.'
 
-if (command == 'play') {
+        if (isVideo) {
+            await conn.sendMessage(m.chat, { video: { url: downloadUrl }, caption: video.title }, { quoted: m })
+        } else {
+            await conn.sendMessage(m.chat, { 
+                audio: { url: downloadUrl }, 
+                mimetype: 'audio/mpeg',
+                fileName: `${video.title}.mp3` 
+            }, { quoted: m })
+        }
 
-let api = `https://api.evogb.org/api/yta?url=${video.url}&apikey=evogb-9ivSW7OY`
-let res = await fetch(api)
-let json = await res.json()
+        await m.react('✅')
 
-await conn.sendMessage(m.chat, {
-audio: { url: json.result.download },
-mimetype: 'audio/mpeg'
-}, { quoted: m })
-
-}
-
-if (command == 'play2') {
-
-let api = `https://rest.apicausas.xyz/api/ytdl?url=${video.url}&apikey=causa-0e3eacf90ab7be15`
-let res = await fetch(api)
-let json = await res.json()
-
-await conn.sendMessage(m.chat, {
-video: { url: json.result.download },
-caption: video.title
-}, { quoted: m })
-
-}
-
-} catch (e) {
-
-conn.reply(m.chat, '❌ Error con la API, intenta otra vez', m)
-
-}
-
+    } catch (e) {
+        console.error(e)
+        await m.react('❌')
+        conn.reply(m.chat, `❌ Error: No se pudo descargar el archivo tras intentar con varios servidores.`, m)
+    }
 }
 
 handler.help = ['play', 'play2']
 handler.tags = ['downloader']
-handler.command = ['play','play2']
+handler.command = /^(play|play2)$/i
 
 export default handler
+              
