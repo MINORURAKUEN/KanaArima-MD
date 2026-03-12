@@ -1,66 +1,63 @@
 import fetch from 'node-fetch';
-import { FormData, Blob } from 'formdata-node';
+import FormData from 'form-data'; // ⚠️ Asegúrate de tener instalado este paquete: npm i form-data
 import { fileTypeFromBuffer } from 'file-type';
 
 /**
- * Upload file to Telegra.ph (Primary) or Pomf2 (Fallback)
- * Libres de bloqueos para APIs de GataBot/Mystic
+ * Upload file to Catbox (Primary) or Tmpfiles (Fallback)
+ * Optimizados para evitar bloqueos en bots
  * @param {Buffer} buffer File Buffer
  * @return {Promise<string>}
  */
 export default async (buffer) => {
-  const { ext, mime } = await fileTypeFromBuffer(buffer);
-  
-  // 1️⃣ PRIMER INTENTO: Telegra.ph (Muy rápido y sin bloqueos)
   try {
-    const form = new FormData();
-    // Compatibilidad con tu versión de buffer
-    const bufferData = buffer.toArrayBuffer ? buffer.toArrayBuffer() : buffer;
-    const blob = new Blob([bufferData], { type: mime });
+    const { ext } = await fileTypeFromBuffer(buffer) || { ext: 'jpg' };
     
-    form.append('file', blob, 'tmp.' + ext);
+    // 1️⃣ PRIMER INTENTO: Catbox.moe (Muy estable y sin límites estrictos)
+    const form = new FormData();
+    form.append('reqtype', 'fileupload');
+    form.append('fileToUpload', buffer, `tmp.${ext}`);
 
-    const res = await fetch('https://telegra.ph/upload', {
+    const res = await fetch('https://catbox.moe/user/api.php', {
       method: 'POST',
       body: form,
+      headers: form.getHeaders(), // Vital para que node-fetch entienda el FormData clásico
     });
     
-    const json = await res.json();
+    if (!res.ok) throw new Error(`Catbox HTTP Error: ${res.status}`);
     
-    if (json && json[0] && json[0].src) {
-      return 'https://telegra.ph' + json[0].src;
-    }
+    // Catbox devuelve la URL directamente en formato de texto
+    const url = await res.text(); 
+    if (url.startsWith('http')) return url.trim();
     
-    throw new Error('Telegra.ph no devolvió el enlace');
+    throw new Error('Catbox no devolvió un enlace válido');
 
   } catch (error) {
-    console.log('[uploadImage] Telegra.ph falló, intentando con Pomf2...');
+    console.log('[uploadImage] Catbox falló, intentando con tmpfiles.org...', error.message);
     
-    // 2️⃣ SEGUNDO INTENTO: Pomf2 (Respaldo si Telegram se cae)
+    // 2️⃣ SEGUNDO INTENTO: tmpfiles.org (Respaldo confiable de 60 minutos)
     try {
       const form2 = new FormData();
-      const bufferData2 = buffer.toArrayBuffer ? buffer.toArrayBuffer() : buffer;
-      const blob2 = new Blob([bufferData2], { type: mime });
-      
-      // Pomf2 exige que el campo se llame 'files[]'
-      form2.append('files[]', blob2, 'tmp.' + ext);
+      form2.append('file', buffer, 'tmp.jpg'); 
 
-      const res2 = await fetch('https://pomf2.lain.la/upload.php', {
+      const res2 = await fetch('https://tmpfiles.org/api/v1/upload', {
         method: 'POST',
         body: form2,
+        headers: form2.getHeaders(),
       });
       
       const json2 = await res2.json();
       
-      if (json2 && json2.success && json2.files && json2.files[0].url) {
-        return json2.files[0].url;
+      if (json2 && json2.status === 'success') {
+        // Tmpfiles devuelve una URL de visor, le agregamos /dl/ para obtener la imagen directa
+        return json2.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/');
       }
       
-      throw new Error('Pomf2 falló');
+      throw new Error('Tmpfiles no devolvió una respuesta exitosa');
 
     } catch (err2) {
       console.error('[uploadImage] Error fatal, no se pudo subir a ningún servidor:', err2.message);
-      throw new Error('Fallo general al subir la imagen a la nube.');
+      throw 'Fallo general al subir la imagen a la nube.'; // Lanzamos string para que el catch del comando lo lea limpio
     }
   }
 };
+
