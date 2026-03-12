@@ -1,48 +1,46 @@
 import fetch from 'node-fetch'
-import * as cheerio from 'cheerio' // Importamos nuestra nueva herramienta
+import * as cheerio from 'cheerio'
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
     if (!text) {
-        return conn.reply(m.chat, `❗ *Uso correcto:*\n${usedPrefix + command} <anime>\n\n💡 *Ejemplo:*\n${usedPrefix + command} naruto`, m)
+        return conn.reply(m.chat, `❗ *Uso correcto:*\n${usedPrefix + command} <anime>\n\n💡 *Ejemplo:*\n${usedPrefix + command} jigoku sensei nube`, m)
     }
 
     try {
-        // Avisamos al usuario que estamos buscando, el scraping puede tardar un par de segundos
-        await conn.reply(m.chat, '⏳ *Buscando en la web, espera un momento...*', m)
+        await conn.reply(m.chat, '⏳ *Buscando en AnimeFLV, espera un momento...*', m)
 
-        // 1. Hacemos la petición a la página de búsqueda de AnimeFLV
-        let searchUrl = `https://wwws.animeflv.net/browse?q=${encodeURIComponent(text)}`
-        let res = await fetch(searchUrl)
+        // 1. URL corregida (sin la 's' en www)
+        let searchUrl = `https://www.animeflv.net/browse?q=${encodeURIComponent(text)}`
         
-        if (!res.ok) throw new Error('No se pudo conectar con la página')
+        // Agregamos un "User-Agent" para simular que somos un navegador real y evitar bloqueos de Cloudflare
+        let res = await fetch(searchUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+            }
+        })
         
-        // 2. Extraemos el HTML crudo de la página
+        if (!res.ok) throw new Error(`Error de conexión HTTP: ${res.status}`)
+        
         let html = await res.text()
-
-        // 3. Cargamos el HTML en Cheerio para poder navegarlo
         let $ = cheerio.load(html)
         let resultados = []
 
-        // 4. Inspeccionamos la estructura de AnimeFLV. 
-        // Sus animes están dentro de una lista con la clase 'ListAnimes'
+        // 2. Extraemos los resultados
         $('ul.ListAnimes li').each((i, el) => {
-            // Extraemos el título y el enlace de cada tarjeta de anime
             let title = $(el).find('h3.Title').text()
             let linkPath = $(el).find('a').attr('href')
             
             if (title && linkPath) {
-                // Completamos la URL porque el href suele ser "/anime/naruto"
-                let fullLink = 'https://wwws.animeflv.net' + linkPath
+                // Dominio corregido aquí también
+                let fullLink = 'https://www.animeflv.net' + linkPath
                 resultados.push({ title, fullLink })
             }
         })
 
-        // 5. Verificamos si encontramos algo
         if (resultados.length === 0) {
-            return conn.reply(m.chat, `❌ No encontré ningún anime llamado *${text}* en AnimeFLV.`, m)
+            return conn.reply(m.chat, `❌ No encontré ningún anime llamado *${text}*.`, m)
         }
 
-        // 6. Armamos el mensaje final (limitamos a 5 resultados para no hacer spam)
         let msg = `╭━━━〔 RESULTADOS: ANIMEFLV 〕━━━⬣\n\n`
         let limite = Math.min(resultados.length, 5)
 
@@ -57,7 +55,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
     } catch (e) {
         console.error('Error en scraping animedl:', e)
-        conn.reply(m.chat, '❌ Ocurrió un error al intentar extraer los datos de la página.', m)
+        conn.reply(m.chat, '❌ Ocurrió un error al intentar extraer los datos de la página. Es posible que la página esté protegiendo el acceso.', m)
     }
 }
 
