@@ -9,6 +9,9 @@ const execPromise = promisify(exec)
 const handler = async (m, { conn, text, command }) => {
     if (!text) throw `❗ *Ingresa el nombre o link*\n\nEjemplo: .${command} Gurenge`
 
+    // Crear carpeta temporal si no existe
+    if (!fs.existsSync('./tmp')) fs.mkdirSync('./tmp')
+
     try {
         const search = await yts(text)
         const video = search.videos[0]
@@ -17,8 +20,13 @@ const handler = async (m, { conn, text, command }) => {
         const isVideo = command === 'play2'
         const chat = m.chat
         
-        await conn.sendMessage(chat, { image: { url: video.thumbnail }, caption: `📌 *Título:* ${video.title}\n🔗 *Link:* ${video.url}` }, { quoted: m })
-        await m.react('⏳')
+        await conn.sendMessage(chat, { 
+            image: { url: video.thumbnail }, 
+            caption: `📌 *Título:* ${video.title}\n🔗 *Link:* ${video.url}` 
+        }, { quoted: m })
+
+        // Reacción corregida
+        await conn.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
 
         let downloadUrl = null
 
@@ -38,14 +46,12 @@ const handler = async (m, { conn, text, command }) => {
             } catch { continue }
         }
 
-        // --- FALLBACK: YT-DLP (TERMUX/LOCAL) ---
+        // --- FALLBACK: YT-DLP (TERMUX) ---
         if (!downloadUrl) {
-            console.log('⚠️ APIs fallaron, intentando con yt-dlp...')
             const fileName = `./tmp/${Date.now()}.${isVideo ? 'mp4' : 'mp3'}`
             const format = isVideo ? 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]' : 'bestaudio[ext=m4a]/best'
             
             try {
-                // Comando para descargar directamente el archivo
                 await execPromise(`yt-dlp -f "${format}" --max-filesize 50M "${video.url}" -o "${fileName}"`)
                 
                 const buffer = fs.readFileSync(fileName)
@@ -55,28 +61,30 @@ const handler = async (m, { conn, text, command }) => {
                     fileName: `${video.title}.${isVideo ? 'mp4' : 'mp3'}`
                 }, { quoted: m })
 
-                fs.unlinkSync(fileName) // Borrar archivo temporal
-                await m.react('✅')
+                fs.unlinkSync(fileName) 
+                await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
                 return 
             } catch (err) {
-                console.error('Error con yt-dlp:', err)
-                throw '❌ Fallaron las APIs y yt-dlp local.'
+                throw new Error('APIs y yt-dlp fallaron.')
             }
         }
 
-        // --- ENVÍO SI FUNCIONÓ ALGUNA API ---
+        // --- ENVÍO POR API ---
         if (isVideo) {
             await conn.sendMessage(chat, { video: { url: downloadUrl }, caption: video.title }, { quoted: m })
         } else {
-            await conn.sendMessage(chat, { audio: { url: downloadUrl }, mimetype: 'audio/mpeg', fileName: `${video.title}.mp3` }, { quoted: m })
+            await conn.sendMessage(chat, { 
+                audio: { url: downloadUrl }, 
+                mimetype: 'audio/mpeg', 
+                fileName: `${video.title}.mp3` 
+            }, { quoted: m })
         }
 
-        await m.react('✅')
+        await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
 
     } catch (e) {
-        console.error(e)
-        await m.react('❌')
-        conn.reply(m.chat, `❌ Error crítico: ${e.message || e}`, m)
+        await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
+        conn.reply(m.chat, `❌ Error: ${e.message || e}`, m)
     }
 }
 
@@ -85,4 +93,4 @@ handler.tags = ['downloader']
 handler.command = /^(play|play2)$/i
 
 export default handler
-    
+            
