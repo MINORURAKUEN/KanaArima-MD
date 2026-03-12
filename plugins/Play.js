@@ -1,15 +1,8 @@
-import yts from 'yt-search'
-import fetch from 'node-fetch'
-import { exec } from 'child_process'
-import { promisify } from 'util'
-import fs from 'fs'
-
-const execPromise = promisify(exec)
+// ... (mismos imports: yts, fetch, exec, promisify, fs)
 
 const handler = async (m, { conn, client, args, text, command }) => {
     const socket = conn || client
     let query = text || args.join(' ')
-    
     if (!query) return socket.sendMessage(m.chat, { text: `《✧》 Escribe el nombre o URL del video.` }, { quoted: m })
 
     if (!fs.existsSync('./tmp')) fs.mkdirSync('./tmp')
@@ -19,10 +12,14 @@ const handler = async (m, { conn, client, args, text, command }) => {
         const video = search.videos[0]
         if (!video) throw new Error('No se encontró ningún video.')
 
-        // --- LÓGICA DE DETECCIÓN DE FORMATO ---
-        const isVideo = /play2|mp4|video/.test(command)
+        // --- LÓGICA DE DETECCIÓN MEJORADA ---
+        // Comandos que fuerzan VIDEO
+        const isVideo = /play2|mp4|video|ytmp4|ytmp4doc/.test(command)
+        // Comandos que fuerzan DOCUMENTO
         const isDoc = /doc|documento/.test(command)
+        
         const type = isVideo ? 'video' : 'audio'
+        const cleanTitle = video.title.replace(/[\\/:*?"<>|]/g, '')
         
         const caption = `╭━━━〔 🎵 YOUTUBE ${type.toUpperCase()} 〕━━━⬣
 ┃ 📌 *Título:* ${video.title}
@@ -38,40 +35,27 @@ const handler = async (m, { conn, client, args, text, command }) => {
         let downloadUrl = null
         let metodo = ""
 
-        // 1. INTENTO CON APIS EXTERNAS
-        const apiList = [
-            { name: "API RestCausas", url: `https://rest.apicausas.xyz/api/ytdl?url=${video.url}&apikey=causa-0e3eacf90ab7be15` },
-            { name: "API Zenkey", url: `https://api.zenkey.my.id/api/download/yt${isVideo ? 'mp4' : 'mp3'}?url=${video.url}` },
-            { name: "API EvoGB", url: `https://api.evogb.org/api/${isVideo ? 'ytdl' : 'yta'}?url=${video.url}&apikey=evogb-9ivSW7OY` }
-        ]
+        // 1. INTENTO CON TU API RESTCAUSAS (v1)
+        try {
+            const apiRes = await fetch(`https://rest.apicausas.xyz/api/v1/descargas/youtube?url=${encodeURIComponent(video.url)}&apikey=causa-0e3eacf90ab7be15`)
+            const json = await apiRes.json()
+            downloadUrl = json.result?.download || json.result?.url || json.data?.url
+            if (downloadUrl) metodo = `Descargado vía: *RestCausas API* ✅`
+        } catch { /* Failover al siguiente método */ }
 
-        for (let api of apiList) {
-            try {
-                let res = await fetch(api.url)
-                let json = await res.json()
-                downloadUrl = json.result?.download || json.result?.url || json.url || json.data?.url
-                if (downloadUrl) {
-                    metodo = `Descargado vía: *${api.name}* ✅`
-                    break
-                }
-            } catch { continue }
-        }
-
-        // --- FUNCIÓN PARA ENVIAR SEGÚN EL COMANDO ---
         const sendFile = async (source) => {
-            const fileName = `${video.title}.${isVideo ? 'mp4' : 'mp3'}`
+            const ext = isVideo ? 'mp4' : 'mp3'
+            const fileName = `${cleanTitle}.${ext}`
             const mimetype = isVideo ? 'video/mp4' : 'audio/mpeg'
             
             if (isDoc) {
-                // Envío como Documento
                 return await socket.sendMessage(m.chat, { 
                     document: typeof source === 'string' ? { url: source } : source, 
                     mimetype, 
                     fileName,
-                    caption: metodo 
+                    caption: `*Archivo:* ${fileName}\n${metodo}`
                 }, { quoted: m })
             } else {
-                // Envío como Multimedia normal
                 return await socket.sendMessage(m.chat, { 
                     [type]: typeof source === 'string' ? { url: source } : source,
                     mimetype,
@@ -84,15 +68,13 @@ const handler = async (m, { conn, client, args, text, command }) => {
         if (downloadUrl) {
             await sendFile(downloadUrl)
         } else {
-            // 2. FALLBACK: yt-dlp (Servidor Local)
+            // 2. FALLBACK: yt-dlp Local
             metodo = "Descargado vía: *yt-dlp (Local)* 🛠️"
             const tempFile = `./tmp/${Date.now()}.${isVideo ? 'mp4' : 'mp3'}`
             const format = isVideo ? 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]' : 'bestaudio[ext=m4a]/best'
             
             await execPromise(`yt-dlp -f "${format}" --max-filesize 60M "${video.url}" -o "${tempFile}"`)
-            const buffer = fs.readFileSync(tempFile)
-            
-            await sendFile(buffer)
+            await sendFile(fs.readFileSync(tempFile))
             if (fs.existsSync(tempFile)) fs.unlinkSync(tempFile)
         }
 
@@ -100,14 +82,14 @@ const handler = async (m, { conn, client, args, text, command }) => {
 
     } catch (e) {
         await socket.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
-        socket.sendMessage(m.chat, { text: `❌ *Error Final:* ${e.message}` }, { quoted: m })
+        socket.sendMessage(m.chat, { text: `❌ *Error:* ${e.message}` }, { quoted: m })
     }
 }
 
-handler.help = ['play', 'play2', 'ytmp3doc', 'ytmp4doc', 'playaudio', 'playdoc']
+handler.help = ['ytmp3', 'ytmp4', 'ytmp3doc', 'ytmp4doc', 'play', 'play2']
 handler.tags = ['downloader']
-// Regex actualizado para reconocer todos tus nuevos comandos
-handler.command = /^(play|play2|mp3|video|mp4|ytmp3doc|ytmp4doc|playaudio|playdoc)$/i
+// Regex que cubre todas las variaciones solicitadas
+handler.command = /^(play|play2|mp3|mp4|video|ytmp3|ytmp4|ytmp3doc|ytmp4doc|playaudio|playdoc)$/i
 
 export default handler
                 
