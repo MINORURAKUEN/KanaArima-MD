@@ -7,12 +7,11 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     }
 
     try {
-        await conn.reply(m.chat, '⏳ *Buscando en AnimeFLV, espera un momento...*', m)
+        await conn.reply(m.chat, '⏳ *Buscando en TioAnime, espera un momento...*', m)
 
-        // 1. URL corregida (sin la 's' en www)
-        let searchUrl = `https://www.animeflv.net/browse?q=${encodeURIComponent(text)}`
+        // 1. Apuntamos al buscador de TioAnime
+        let searchUrl = `https://tioanime.com/directorio?q=${encodeURIComponent(text)}`
         
-        // Agregamos un "User-Agent" para simular que somos un navegador real y evitar bloqueos de Cloudflare
         let res = await fetch(searchUrl, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
@@ -25,27 +24,27 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         let $ = cheerio.load(html)
         let resultados = []
 
-        // 2. Extraemos los resultados
-        $('ul.ListAnimes li').each((i, el) => {
-            let title = $(el).find('h3.Title').text()
+        // 2. TioAnime usa la etiqueta <article> con la clase 'anime' para sus resultados
+        $('article.anime').each((i, el) => {
+            let title = $(el).find('h3.title').text()
             let linkPath = $(el).find('a').attr('href')
             
             if (title && linkPath) {
-                // Dominio corregido aquí también
-                let fullLink = 'https://www.animeflv.net' + linkPath
+                // TioAnime a veces devuelve rutas relativas, así que agregamos el dominio
+                let fullLink = 'https://tioanime.com' + linkPath
                 resultados.push({ title, fullLink })
             }
         })
 
         if (resultados.length === 0) {
-            return conn.reply(m.chat, `❌ No encontré ningún anime llamado *${text}*.`, m)
+            return conn.reply(m.chat, `❌ No encontré ningún anime llamado *${text}* en TioAnime.`, m)
         }
 
-        let msg = `╭━━━〔 RESULTADOS: ANIMEFLV 〕━━━⬣\n\n`
+        let msg = `╭━━━〔 RESULTADOS: TIOANIME 〕━━━⬣\n\n`
         let limite = Math.min(resultados.length, 5)
 
         for (let i = 0; i < limite; i++) {
-            msg += `✦ *${resultados[i].title}*\n`
+            msg += `✦ *${resultados[i].title.trim()}*\n` // .trim() limpia espacios extra
             msg += `🔗 ${resultados[i].fullLink}\n\n`
         }
 
@@ -55,13 +54,13 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
     } catch (e) {
         console.error('Error en scraping animedl:', e)
-        conn.reply(m.chat, '❌ Ocurrió un error al intentar extraer los datos de la página. Es posible que la página esté protegiendo el acceso.', m)
+        conn.reply(m.chat, '❌ Ocurrió un error al intentar conectarse a la página. Es posible que también esté bloqueada.', m)
     }
 }
 
 handler.help = ['animedl <anime>']
 handler.tags = ['descargas']
-handler.command = ['animedl', 'animeflv']
+handler.command = ['animedl', 'tioanime']
 
 export default handler
 
