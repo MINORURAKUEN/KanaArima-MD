@@ -8,13 +8,13 @@ const handler = async (m, { conn, text, args, usedPrefix, command }) => {
   const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
   const tradutor = _translate.plugins.descargas_tiktok;
 
-  // 1. Validaciones previas (Sin enviar mensaje de carga aún)
+  // 1. Validaciones previas
   if (!text) throw `*${tradutor.texto1}*\n_${usedPrefix + command} https://vt.tiktok.com/ZS12345/ _`;
   if (!/(?:https:?\/{2})?(?:w{3}|vm|vt|t)?\.?tiktok.com\/([^\s&]+)/gi.test(text)) throw `*${tradutor.texto2}*`;
 
-  // 2. Reacción visual y mensaje de espera (Solo si el comando es válido)
-  await m.react('⏳'); 
-  const waitMsg = await m.reply(`*[⏳] ${tradutor.texto3}*`);
+  // 2. Reacción y Mensaje de espera (Forma compatible)
+  await conn.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
+  await m.reply(`*[⏳] ${tradutor.texto3}*`);
 
   try {
     let videoUrl = null;
@@ -25,7 +25,7 @@ const handler = async (m, { conn, text, args, usedPrefix, command }) => {
       videoUrl = links.find(link => /hdplay/i.test(link)) || links.find(link => /download/i.test(link)) || links[0];
     }
 
-    // INTENTO 2: Fallback con APIs
+    // INTENTO 2: Fallback con APIs (Calidad HD)
     if (!videoUrl) {
       const encoded = encodeURIComponent(args[0]);
       const apis = [
@@ -45,15 +45,14 @@ const handler = async (m, { conn, text, args, usedPrefix, command }) => {
 
     if (!videoUrl) throw new Error();
 
-    // 3. Envío del video y eliminación del mensaje de espera
+    // 3. Envío exitoso
     const cap = `✅ *TikTok HD*\n${tradutor.texto8[0]} _${usedPrefix}tomp3_ ${tradutor.texto8[1]}`;
-    
     await conn.sendMessage(m.chat, { video: { url: videoUrl }, caption: cap }, { quoted: m });
-    await m.react('✅');
+    await conn.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
 
   } catch (e) {
     console.error(e);
-    await m.react('❌');
+    await conn.sendMessage(m.chat, { react: { text: '❌', key: m.key } });
     throw `*${tradutor.texto9}*`;
   }
 };
