@@ -1,75 +1,55 @@
-import fs from "fs/promises" // ✅ Cambiado a promesas para no bloquear el bot
+import fs from "fs"
+import axios from "axios"
 import uploadImage from "../src/libraries/uploadImage.js"
 
 const handler = async (m, { conn, usedPrefix, command }) => {
-  let tradutor; // Lo declaramos fuera para poder usarlo en el catch si es necesario
+  const idioma = global.db.data.users[m.sender].language || global.defaultLenguaje
+  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`))
+  const tradutor = _translate.plugins.herramientas_hd
 
   try {
-    // 1. Encadenamiento opcional ultra-seguro por si la DB aún no carga
-    const idioma = global.db?.data?.users?.[m.sender]?.language || global.defaultLenguaje || "es"
-    
-    // 2. Lectura ASÍNCRONA del idioma (Mejora el rendimiento del bot)
-    const fileContent = await fs.readFile(`./src/languages/${idioma}.json`, "utf-8")
-    const _translate = JSON.parse(fileContent)
-    tradutor = _translate.plugins.herramientas_hd
-
     const q = m.quoted ? m.quoted : m
     const mime = (q.msg || q).mimetype || q.mediaType || ""
 
-    // 3. Verificamos que sea una imagen compatible
-    if (!mime) throw `${tradutor.texto1} ${usedPrefix + command}*`
-    if (!/image\/(jpe?g|png)/.test(mime)) throw `${tradutor.texto2[0]} (${mime}) ${tradutor.texto2[1]}`
+    // Validación de imagen
+    if (!mime) throw `*${tradutor.texto1} ${usedPrefix + command}*`
+    if (!/image\/(jpe?g|png)/.test(mime)) throw `*${tradutor.texto2[0]} (${mime}) ${tradutor.texto2[1]}*`
 
-    // Avisamos que el proceso inició
-    await m.reply(tradutor.texto3)
+    m.reply(tradutor.texto3) // Mensaje de "esperando..."
 
-    // 4. Procesamiento seguro de la imagen
     const img = await q.download()
-    if (!img) throw "No se pudo extraer la imagen del mensaje." // Validación extra
-
     const fileUrl = await uploadImage(img)
-    if (!fileUrl) throw "Error al subir la imagen a nuestro servidor temporal."
+    
+    // Llamada a la nueva API
+    const imageBuffer = await upscaleImage(fileUrl)
 
-    const enhancedImage = await upscaleWithStellar(fileUrl)
-
-    // 5. Enviamos el resultado
-    await conn.sendMessage(m.chat, { 
-        image: enhancedImage, 
-        caption: "✨ Mejora HD completada" 
-    }, { quoted: m })
-
+    await conn.sendMessage(m.chat, { image: imageBuffer, caption: '✅ Imagen mejorada con éxito' }, { quoted: m })
   } catch (e) {
-    console.error("[Comando HD Error]:", e)
-    
-    // Manejo de errores dinámico: si es un texto (nuestros throws), lo mandamos directo.
-    const errorMsg = typeof e === "string" ? e : (e.message || "Error desconocido")
-    const prefixError = tradutor?.texto4 ? tradutor.texto4 : "❌ *Ocurrió un error*"
-    
-    await m.reply(`${prefixError}\n\n*Detalle:* ${errorMsg}`)
+    console.error(e)
+    throw `${tradutor.texto4} ${e.message || e}`
   }
 }
 
 handler.help = ["remini", "hd", "enhance"]
 handler.tags = ["ai", "tools"]
 handler.command = ["remini", "hd", "enhance"]
+
 export default handler
 
-// ✅ La función se mantiene igual de genial que en tu refactorización
-async function upscaleWithStellar(url) {
+// Función para conectar con la API de apicausas.xyz
+async function upscaleImage(url) {
   try {
-    const endpoint = `https://api.stellarwa.xyz/tools/upscale?url=${encodeURIComponent(url)}&key=BrunoSobrino`
-    
-    const response = await fetch(endpoint, {
-      headers: { 'Accept': 'image/*' }
+    // Nota: Sustituye 'TU_APIKEY' por tu clave real si es necesario
+    const apikey = "causa-0e3eacf90ab7be15" 
+    const endpoint = `https://rest.apicausas.xyz/api/v1/utilidades/upscale?apikey=${apikey}&url=${url}&type=4`
+
+    const response = await axios.get(endpoint, {
+      responseType: "arraybuffer"
     })
 
-    if (!response.ok) {
-        throw new Error(`La API de Stellar devolvió el estado: ${response.status}`)
-    }
-
-    const arrayBuffer = await response.arrayBuffer()
-    return Buffer.from(arrayBuffer)
+    return Buffer.from(response.data)
   } catch (err) {
-    throw new Error(`Fallo al conectar con la API de mejora: ${err.message}`)
+    throw "Error al procesar la imagen con la API."
   }
 }
+
