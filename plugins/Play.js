@@ -2,21 +2,21 @@ import yts from 'yt-search'
 import fetch from 'node-fetch'
 
 const handler = async (m, { conn, client, args, text, command }) => {
-    const socket = conn || client
-    let query = text || args.join(' ')
-    const apikey = "causa-0e3eacf90ab7be15"
-    
-    if (!query) return socket.sendMessage(m.chat, { text: `《✧》 Escribe el nombre o URL del video.` }, { quoted: m })
+    const socket = conn || client
+    let query = text || args.join(' ')
+    const apikey = "causa-0e3eacf90ab7be15"
+    
+    if (!query) return socket.sendMessage(m.chat, { text: `《✧》 Escribe el nombre o URL del video.` }, { quoted: m })
 
-    try {
-        const search = await yts(query)
-        const video = search.videos[0]
-        if (!video) throw new Error('No se encontró ningún video.')
+    try {
+        const search = await yts(query)
+        const video = search.videos[0]
+        if (!video) throw new Error('No se encontró ningún video.')
 
-        const isVideo = /play2|mp4|video/.test(command)
-        const type = isVideo ? 'mp4' : 'mp3'
+        const isVideo = /play2|mp4|video/.test(command)
+        const type = isVideo ? 'mp4' : 'mp3'
 
-        const captionInfo = `╭━━━〔 🎵 YOUTUBE ${isVideo ? 'VIDEO' : 'AUDIO'} 〕━━━⬣
+        const captionInfo = `╭━━━〔 🎵 YOUTUBE ${isVideo ? 'VIDEO' : 'AUDIO'} 〕━━━⬣
 ┃ 📌 *Título:* ${video.title}
 ┃ ⏱ *Duración:* ${video.timestamp}
 ┃ 👀 *Vistas:* ${video.views.toLocaleString()}
@@ -24,41 +24,39 @@ const handler = async (m, { conn, client, args, text, command }) => {
 ┃ 🔗 *Link:* ${video.url}
 ╰━━━━━━━━━━━━━━━━⬣`.trim()
 
-        await socket.sendMessage(m.chat, { image: { url: video.thumbnail }, caption: captionInfo }, { quoted: m })
-        await socket.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
+        await socket.sendMessage(m.chat, { image: { url: video.thumbnail }, caption: captionInfo }, { quoted: m })
+        await socket.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
 
-        const apiUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(video.url)}&type=${type}`
-        const res = await fetch(apiUrl)
-        const json = await res.json()
+        const apiUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(video.url)}&type=${type}`
+        const res = await fetch(apiUrl)
+        const json = await res.json()
 
-        const downloadUrl = json.data?.download?.url || json.result?.download || json.url
-        if (!downloadUrl) throw new Error('La API no devolvió un enlace válido.')
+        const downloadUrl = json.data?.download?.url || json.result?.download || json.url
+        if (!downloadUrl) throw new Error('La API no devolvió un enlace válido.')
 
-        const metodo = `Descargado vía: *RestCausas* ✅`
+        if (isVideo) {
+            // ENVIAR COMO VIDEO (Reproducible directamente)
+            await socket.sendMessage(m.chat, { 
+                video: { url: downloadUrl }, 
+                caption: `🎬 *Aquí tienes tu video*\n\nDescargado vía: *RestCausas* ✅`,
+                mimetype: 'video/mp4',
+                fileName: `${video.title}.mp4`
+            }, { quoted: m })
+        } else {
+            // ENVIAR COMO AUDIO
+            await socket.sendMessage(m.chat, { 
+                audio: { url: downloadUrl }, 
+                mimetype: 'audio/mpeg',
+                fileName: `${video.title}.mp3`
+            }, { quoted: m })
+        }
 
-        if (isVideo) {
-            // ENVIAR COMO DOCUMENTO: Esto evita el error de "Video no disponible"
-            await socket.sendMessage(m.chat, { 
-                document: { url: downloadUrl }, 
-                mimetype: 'video/mp4',
-                fileName: `${video.title}.mp4`,
-                caption: `🎬 *Aquí tienes tu video*\n\n${metodo}`
-            }, { quoted: m })
-        } else {
-            // ENVIAR COMO AUDIO
-            await socket.sendMessage(m.chat, { 
-                audio: { url: downloadUrl }, 
-                mimetype: 'audio/mpeg',
-                fileName: `${video.title}.mp3`
-            }, { quoted: m })
-        }
+        await socket.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
 
-        await socket.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
-
-    } catch (e) {
-        await socket.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
-        socket.sendMessage(m.chat, { text: `❌ *Error:* ${e.message}` }, { quoted: m })
-    }
+    } catch (e) {
+        await socket.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
+        socket.sendMessage(m.chat, { text: `❌ *Error:* ${e.message}` }, { quoted: m })
+    }
 }
 
 handler.help = ['play', 'play2']
