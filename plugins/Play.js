@@ -1,6 +1,5 @@
 import yts from 'yt-search'
 import fetch from 'node-fetch'
-import fs from 'fs'
 
 const handler = async (m, { conn, client, args, text, command }) => {
     const socket = conn || client
@@ -30,6 +29,7 @@ const handler = async (m, { conn, client, args, text, command }) => {
         await socket.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
 
         const apiUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(video.url)}&type=${type}`
+
         const res = await fetch(apiUrl)
         const json = await res.json()
 
@@ -37,8 +37,9 @@ const handler = async (m, { conn, client, args, text, command }) => {
 
         if (!downloadUrl) throw new Error('La API no devolvió un enlace válido.')
 
-        // DESCARGA LOCAL PARA EVITAR EL ERROR DE WHATSAPP
+        // SOLUCIÓN: Descargar el archivo para enviarlo como buffer
         const response = await fetch(downloadUrl)
+        if (!response.ok) throw new Error('Error al descargar el archivo desde el servidor de la API.')
         const buffer = await response.buffer()
 
         const metodo = `Descargado vía: *RestCausas* ✅`
@@ -63,4 +64,4 @@ handler.tags = ['downloader']
 handler.command = /^(play|play2|mp3|video|mp4)$/i
 
 export default handler
-    
+
