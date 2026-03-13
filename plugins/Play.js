@@ -17,7 +17,7 @@ const handler = async (m, { conn, client, args, text, command }) => {
         const type = isVideo ? 'mp4' : 'mp3'
         const mediaType = isVideo ? 'video' : 'audio'
 
-        const caption = `╭━━━〔 🎵 YOUTUBE ${mediaType.toUpperCase()} 〕━━━⬣
+        const captionInfo = `╭━━━〔 🎵 YOUTUBE ${mediaType.toUpperCase()} 〕━━━⬣
 ┃ 📌 *Título:* ${video.title}
 ┃ ⏱ *Duración:* ${video.timestamp}
 ┃ 👀 *Vistas:* ${video.views.toLocaleString()}
@@ -25,7 +25,7 @@ const handler = async (m, { conn, client, args, text, command }) => {
 ┃ 🔗 *Link:* ${video.url}
 ╰━━━━━━━━━━━━━━━━⬣`.trim()
 
-        await socket.sendMessage(m.chat, { image: { url: video.thumbnail }, caption }, { quoted: m })
+        await socket.sendMessage(m.chat, { image: { url: video.thumbnail }, caption: captionInfo }, { quoted: m })
         await socket.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
 
         const apiUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(video.url)}&type=${type}`
@@ -37,19 +37,24 @@ const handler = async (m, { conn, client, args, text, command }) => {
 
         if (!downloadUrl) throw new Error('La API no devolvió un enlace válido.')
 
-        // SOLUCIÓN: Descargar el archivo para enviarlo como buffer
-        const response = await fetch(downloadUrl)
-        if (!response.ok) throw new Error('Error al descargar el archivo desde el servidor de la API.')
-        const buffer = await response.buffer()
-
         const metodo = `Descargado vía: *RestCausas* ✅`
 
-        await socket.sendMessage(m.chat, { 
-            [mediaType]: buffer, 
-            mimetype: isVideo ? 'video/mp4' : 'audio/mpeg',
-            fileName: `${video.title}.${type}`,
-            caption: isVideo ? `${video.title}\n\n${metodo}` : metodo
-        }, { quoted: m })
+        if (isVideo) {
+            // SOLUCIÓN: Enviar como documento para saltar el bloqueo de códec de WhatsApp
+            await socket.sendMessage(m.chat, { 
+                document: { url: downloadUrl }, 
+                mimetype: 'video/mp4',
+                fileName: `${video.title}.mp4`,
+                caption: `*Nota:* Enviado como documento por restricciones de formato.\n\n${metodo}`
+            }, { quoted: m })
+        } else {
+            // Si es audio (MP3), WhatsApp suele aceptarlo sin problemas
+            await socket.sendMessage(m.chat, { 
+                audio: { url: downloadUrl }, 
+                mimetype: 'audio/mpeg',
+                fileName: `${video.title}.mp3`
+            }, { quoted: m })
+        }
 
         await socket.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
 
