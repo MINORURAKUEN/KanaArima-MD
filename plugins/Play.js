@@ -1,69 +1,87 @@
 import yts from 'yt-search'
 import fetch from 'node-fetch'
 
-const handler = async (m, { conn, client, args, text, command }) => {
-    const socket = conn || client
-    let query = text || args.join(' ')
-    const apikey = "causa-0e3eacf90ab7be15"
-    
-    if (!query) return socket.sendMessage(m.chat, { text: `《✧》 Escribe el nombre o URL del video.` }, { quoted: m })
+export const run = {
+   usage: ['play', 'video', 'ytmp3', 'ytmp4'],
+   hidden: ['play2', 'playvid', 'playvideo', 'yta', 'ytv'],
+   use: 'query / link',
+   category: 'downloader',
+   async: async (m, { client, text, isPrefix, command, Config, users, Utils }) => {
+      try {
+         // 1. Validación de entrada
+         if (!text) return client.reply(m.chat, Utils.example(isPrefix, command, 'lathi'), m)
+         
+         await client.sendReact(m.chat, '🕒', m.key)
 
-    try {
-        const search = await yts(query)
-        const video = search.videos[0]
-        if (!video) throw new Error('No se encontró ningún video.')
+         // 2. Búsqueda o detección de URL
+         const isUrl = /^(?:https?:\/\/)?(?:www\.|m\.|music\.)?youtu\.?be(?:\.com)?\/?.*(?:watch|embed)?(?:.*v=|v\/|\/)([\w\-_]+)\&?/.test(text)
+         const search = await yts(isUrl ? text : text)
+         const video = search.videos[0]
+         if (!video) return client.reply(m.chat, '❌ No se encontró el video.', m)
 
-        const isVideo = /play2|mp4|video/.test(command)
-        const type = isVideo ? 'mp4' : 'mp3'
+         // 3. Determinar tipo de descarga (Audio o Video)
+         const isVideo = /video|mp4|play2|playvid/i.test(command)
+         const type = isVideo ? 'video' : 'audio'
+         const apikey = "causa-0e3eacf90ab7be15"
 
-        const captionInfo = `╭━━━〔 🎵 YOUTUBE ${isVideo ? 'VIDEO' : 'AUDIO'} 〕━━━⬣
-┃ 📌 *Título:* ${video.title}
-┃ ⏱ *Duración:* ${video.timestamp}
-┃ 👀 *Vistas:* ${video.views.toLocaleString()}
-┃ 👤 *Canal:* ${video.author.name}
-┃ 🔗 *Link:* ${video.url}
-╰━━━━━━━━━━━━━━━━⬣`.trim()
+         // 4. Llamada a la API de Apicausa
+         const apiUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(video.url)}&type=${type}`
+         const res = await fetch(apiUrl)
+         const json = await res.json()
 
-        await socket.sendMessage(m.chat, { image: { url: video.thumbnail }, caption: captionInfo }, { quoted: m })
-        await socket.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
+         if (!json.status) return client.reply(m.chat, Utils.jsonFormat(json), m)
 
-        const apiUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(video.url)}&type=${type}`
-        const res = await fetch(apiUrl)
-        const json = await res.json()
+         // 5. Preparar datos de descarga (Compatibilidad con diferentes estructuras de JSON)
+         const result = json.result || json.data
+         const downloadUrl = result.url || result.download_url || result.download
+         const size = result.size || '0 MB'
 
-        const downloadUrl = json.data?.download?.url || json.result?.download || json.url
-        if (!downloadUrl) throw new Error('La API no devolvió un enlace válido.')
+         // 6. Validación de límites de tamaño (Free vs Premium)
+         const chSize = Utils.sizeLimit(size, users.premium ? Config.max_upload : Config.max_upload_free)
+         const isOver = users.premium 
+            ? `💀 El tamaño del archivo (${size}) excede el límite máximo permitido.` 
+            : `⚠️ El archivo pesa ${size}. Los usuarios gratuitos solo pueden descargar hasta ${Config.max_upload_free} MB. ¡Hazte premium para subir el límite a ${Config.max_upload} MB!`
+         
+         if (chSize.oversize) return client.reply(m.chat, isOver, m)
 
-        const metodo = `Descargado vía: *RestCausas* ✅`
+         // 7. Caption informativo
+         let caption = `乂  *Y T - ${type.toUpperCase()}*\n\n`
+         caption += `	◦  *Título* : ${video.title}\n`
+         caption += `	◦  *Tamaño* : ${size}\n`
+         caption += `	◦  *Duración* : ${video.timestamp}\n`
+         caption += `	◦  *Canal* : ${video.author.name}\n\n`
+         caption += global.footer
 
-        if (isVideo) {
-            // ENVIAR COMO DOCUMENTO: Esto evita el error de "Video no disponible"
-            await socket.sendMessage(m.chat, { 
-                document: { url: downloadUrl }, 
-                mimetype: 'video/mp4',
-                fileName: `${video.title}.mp4`,
-                caption: `🎬 *Aquí tienes tu video*\n\n${metodo}`
-            }, { quoted: m })
-        } else {
-            // ENVIAR COMO AUDIO
-            await socket.sendMessage(m.chat, { 
-                audio: { url: downloadUrl }, 
-                mimetype: 'audio/mpeg',
-                fileName: `${video.title}.mp3`
-            }, { quoted: m })
-        }
+         // 8. Envío del archivo
+         const fileName = `${video.title}.${isVideo ? 'mp4' : 'mp3'}`
+         const mime = isVideo ? 'video/mp4' : 'audio/mpeg'
+         let isSize = size.replace(/[^0-9.]/g, '').trim()
 
-        await socket.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
+         // Si pesa más de 99MB o es audio, lo mandamos como documento para mayor estabilidad
+         if (parseFloat(isSize) > 99 || !isVideo) {
+            await client.sendMessageModify(m.chat, caption, m, {
+               largeThumb: true,
+               thumbnail: await Utils.fetchAsBuffer(video.thumbnail)
+            })
+            
+            return client.sendFile(m.chat, downloadUrl, fileName, '', m, {
+               document: true,
+               APIC: await Utils.fetchAsBuffer(video.thumbnail)
+            }, {
+               jpegThumbnail: await Utils.generateImageThumbnail(video.thumbnail)
+            })
+         }
 
-    } catch (e) {
-        await socket.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
-        socket.sendMessage(m.chat, { text: `❌ *Error:* ${e.message}` }, { quoted: m })
-    }
-}
+         // Envío normal para videos ligeros
+         client.sendFile(m.chat, downloadUrl, fileName, caption, m)
 
-handler.help = ['play', 'play2']
-handler.tags = ['downloader']
-handler.command = /^(play|play2|mp3|video|mp4)$/i
-
-export default handler
+      } catch (e) {
+         console.error(e)
+         client.reply(m.chat, Utils.jsonFormat(e), m)
+      }
+   },
+   error: false,
+   limit: true,
+   restrict: true
+                }
 
