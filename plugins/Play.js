@@ -28,14 +28,14 @@ const handler = async (m, { conn, client, args, text, command }) => {
         await socket.sendMessage(m.chat, { image: { url: video.thumbnail }, caption }, { quoted: m })
         await socket.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
 
-        // Configuración de la nueva API
         const apiUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(video.url)}&type=${type}`
 
         const res = await fetch(apiUrl)
         const json = await res.json()
 
-        // Extraer link de descarga según la estructura de la API
-        const downloadUrl = json.result?.download || json.result?.url || json.url || json.data?.url
+        // AJUSTE SEGÚN TU CAPTURA DE PANTALLA:
+        // El link está en: json.data.download.url
+        const downloadUrl = json.data?.download?.url || json.result?.download || json.url
 
         if (!downloadUrl) throw new Error('La API no devolvió un enlace de descarga válido.')
 
