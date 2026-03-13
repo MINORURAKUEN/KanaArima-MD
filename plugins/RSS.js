@@ -1,41 +1,44 @@
 import Parser from 'rss-parser'
 let parser = new Parser()
 
+// URL del proxy para AnimeAV1
 const rssURL = 'https://rss-proxy.madbots.dev/api/w2f?v=0.1&url=https%3A%2F%2Fanimeav1.com%2F&link=.%2Fa%5B1%5D&context=%2F%2Fdiv%5B1%5D%2Fdiv%5B2%5D%2Fmain%5B1%5D%2Fsection%2Fdiv%5B1%5D%2Farticle&re=none&out=atom'
 
 let handler = async (m, { conn }) => {
   try {
+    // Obtenemos el feed de noticias
     let feed = await parser.parseURL(rssURL)
 
     if (!feed.items || feed.items.length === 0) {
-      return conn.reply(m.chat, '⚠️ No hay noticias nuevas.', m)
+      return conn.reply(m.chat, '⚠️ No hay noticias disponibles en este momento.', m)
     }
 
-    // El primer item será nuestra portada
-    let firstItem = feed.items[0]
-    
-    // Intentamos obtener la imagen de varias fuentes comunes en feeds Atom/RSS
-    let image = firstItem.enclosure?.url || 
-                firstItem.content?.match(/src="([^"]+)"/)?.[1] || 
-                'https://animeav1.com/favicon.ico' // Imagen por defecto
+    let text = `✨ *ANIME AV1 - RECIENTES* ✨\n\n`
 
-    let text = `✨ *ÚLTIMOS LANZAMIENTOS* ✨\n\n`
+    // Listamos los 5 posts más recientes
+    let items = feed.items.slice(0, 5)
 
-    // Listamos los últimos 5
-    feed.items.slice(0, 5).forEach((item, i) => {
-      text += `${i === 0 ? '⭐' : '🔹'} *${item.title.trim()}*\n`
-      text += `🔗 ${item.link}\n\n`
-    })
+    for (let item of items) {
+      let title = item.title ? item.title.trim() : 'Sin título'
+      
+      text += `🔹 *${title}*\n`
+      text += `🔗 ${item.link}\n`
+      text += `──────────────────\n`
+    }
 
-    // Enviamos con foto (usando la imagen del primer post como miniatura)
-    await conn.sendFile(m.chat, image, 'anime.jpg', text, m)
+    text += `\n_Usa .recentfeed para actualizar_`
+
+    // Enviamos solo el mensaje de texto
+    await conn.reply(m.chat, text, m)
 
   } catch (e) {
     console.error(e)
-    conn.reply(m.chat, '❌ Error al obtener el feed con imagen.', m)
+    conn.reply(m.chat, '❌ Error al conectar con el servidor de AnimeAV1.', m)
   }
 }
 
+handler.help = ['animeav1']
+handler.tags = ['anime']
 handler.command = ['recentfeed', 'animeav1']
 
 export default handler
