@@ -43,10 +43,10 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
         if (!result) return m.reply(`*─── [ ❌ SIN RESULTADOS ] ───*\n\nNo se hallaron coincidencias para: *${text}*`)
 
-        // --- DISEÑO CON NEGRITA Y CITA ( > ) ---
+        // --- DISEÑO CORREGIDO (FORMATO WHATSAPP) ---
         let caption = `✨ *R E S U L T A D O* ✨\n\n`
-        caption += `> **🎬 TÍTULO:**\n`
-        caption += `> **${result.title}**\n\n`
+        caption += `> *🎬 TÍTULO:* \n`
+        caption += `> *${result.title}*\n\n`
         caption += `╔════════════════════╗\n`
         caption += `┃  🔞 *CATEGORÍA:* Hentai\n`
         caption += `┃  🔗 *ENLACE:* ${result.link}\n`
