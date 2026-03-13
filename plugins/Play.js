@@ -16,8 +16,8 @@ const handler = async (m, { conn, client, args, text, command }) => {
 
         const isVideo = /play2|mp4|video/i.test(command)
         const type = isVideo ? 'video' : 'audio'
+        const format = isVideo ? 'mp4' : 'mp3' // Variable para el parámetro type de la API
 
-        // Cuadro de información restaurado
         const caption = `╭━━━〔 🎵 YOUTUBE ${type.toUpperCase()} 〕━━━⬣
 ┃ 📌 *Título:* ${video.title}
 ┃ ⏱ *Duración:* ${video.timestamp}
@@ -30,32 +30,34 @@ _Por favor espera, tu descarga está en proceso..._`.trim()
         await socket.sendMessage(m.chat, { image: { url: video.thumbnail }, caption }, { quoted: m })
 
         let downloadUrl = null
+        const ytUrl = encodeURIComponent(video.url) 
 
-        // INTENTO CON APIS EXTERNAS (RestCausas actualizada)
+        // INTENTO CON APIS EXTERNAS (RestCausas como prioridad 1 con el parámetro type)
         const apiList = [
-            { url: `https://apis-keith.vercel.app/download/${isVideo ? 'dlmp4' : 'dlmp3'}?url=${video.url}` },
-            { url: `https://api.zenkey.my.id/api/download/yt${isVideo ? 'mp4' : 'mp3'}?url=${video.url}` },
-            { url: `https://api.evogb.org/api/${isVideo ? 'ytdl' : 'yta'}?url=${video.url}&apikey=evogb-9ivSW7OY` },
-            { url: `https://rest.apicausas.xyz/api/v1/descargas/youtube?url=${video.url}&apikey=causa-0e3eacf90ab7be15` }
+            { url: `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=causa-0e3eacf90ab7be15&url=${ytUrl}&type=${format}` },
+            { url: `https://apis-keith.vercel.app/download/${isVideo ? 'dlmp4' : 'dlmp3'}?url=${ytUrl}` },
+            { url: `https://api.zenkey.my.id/api/download/yt${format}?url=${ytUrl}` },
+            { url: `https://api.evogb.org/api/${isVideo ? 'ytdl' : 'yta'}?url=${ytUrl}&apikey=evogb-9ivSW7OY` }
         ]
 
         for (let api of apiList) {
             try {
-                let { data } = await axios.get(api.url)
-                downloadUrl = data.result?.downloadUrl || data.result?.download || data.result?.url || data.url || data.data?.url
+                let { data } = await axios.get(api.url, { timeout: 15000 })
+                
+                // Extraemos la URL según cómo la devuelva la API
+                downloadUrl = data?.result?.downloadUrl || data?.result?.download || data?.result?.url || data?.url || data?.data?.url || data?.link || data?.data?.link
                 
                 if (downloadUrl) break 
-            } catch { 
+            } catch (err) { 
                 continue 
             }
         }
 
         if (downloadUrl) {
-            // Envío del archivo sin firma
             await socket.sendMessage(m.chat, { 
                 [type]: { url: downloadUrl },
                 mimetype: isVideo ? 'video/mp4' : 'audio/mpeg',
-                fileName: `${video.title}.${isVideo ? 'mp4' : 'mp3'}`
+                fileName: `${video.title}.${format}`
             }, { quoted: m })
             
             await socket.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
