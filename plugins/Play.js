@@ -15,9 +15,8 @@ const handler = async (m, { conn, client, args, text, command }) => {
 
         const isVideo = /play2|mp4|video/.test(command)
         const type = isVideo ? 'mp4' : 'mp3'
-        const mediaType = isVideo ? 'video' : 'audio'
 
-        const captionInfo = `╭━━━〔 🎵 YOUTUBE ${mediaType.toUpperCase()} 〕━━━⬣
+        const captionInfo = `╭━━━〔 🎵 YOUTUBE ${isVideo ? 'VIDEO' : 'AUDIO'} 〕━━━⬣
 ┃ 📌 *Título:* ${video.title}
 ┃ ⏱ *Duración:* ${video.timestamp}
 ┃ 👀 *Vistas:* ${video.views.toLocaleString()}
@@ -29,26 +28,24 @@ const handler = async (m, { conn, client, args, text, command }) => {
         await socket.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
 
         const apiUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(video.url)}&type=${type}`
-
         const res = await fetch(apiUrl)
         const json = await res.json()
 
         const downloadUrl = json.data?.download?.url || json.result?.download || json.url
-
         if (!downloadUrl) throw new Error('La API no devolvió un enlace válido.')
 
         const metodo = `Descargado vía: *RestCausas* ✅`
 
         if (isVideo) {
-            // SOLUCIÓN: Enviar como documento para saltar el bloqueo de códec de WhatsApp
+            // ENVIAR COMO DOCUMENTO: Esto evita el error de "Video no disponible"
             await socket.sendMessage(m.chat, { 
                 document: { url: downloadUrl }, 
                 mimetype: 'video/mp4',
                 fileName: `${video.title}.mp4`,
-                caption: `*Nota:* Enviado como documento por restricciones de formato.\n\n${metodo}`
+                caption: `🎬 *Aquí tienes tu video*\n\n${metodo}`
             }, { quoted: m })
         } else {
-            // Si es audio (MP3), WhatsApp suele aceptarlo sin problemas
+            // ENVIAR COMO AUDIO
             await socket.sendMessage(m.chat, { 
                 audio: { url: downloadUrl }, 
                 mimetype: 'audio/mpeg',
