@@ -1,52 +1,30 @@
 import Parser from 'rss-parser'
 let parser = new Parser()
 
-global.rssAnime = global.rssAnime || {}
+let rss = 'https://nyaa.si/?page=rss&q=anime'
 
-let rss = 'https://nyaa.si/?page=rss&q=one+piece'
-
-async function checkRSS(conn) {
+let handler = async (m, { conn }) => {
   try {
+
     let feed = await parser.parseURL(rss)
-    let item = feed.items[0]
 
-    for (let chat in global.rssAnime) {
-      if (!global.rssAnime[chat].active) continue
+    let text = `📡 *RSS ANIME RECIENTES*\n\n`
 
-      if (global.rssAnime[chat].last !== item.link) {
-        global.rssAnime[chat].last = item.link
+    let items = feed.items.slice(0, 5)
 
-        conn.sendMessage(chat, {
-          text: `📺 *Nuevo episodio detectado*\n\n${item.title}\n\n🔗 ${item.link}`
-        })
-      }
+    for (let item of items) {
+      text += `📺 ${item.title}\n`
+      text += `🔗 ${item.link}\n\n`
     }
+
+    conn.reply(m.chat, text, m)
+
   } catch (e) {
     console.log(e)
+    conn.reply(m.chat, '❌ Error al obtener el RSS', m)
   }
 }
 
-setInterval(() => {
-  if (global.conn) checkRSS(global.conn)
-}, 300000) // cada 5 minutos
-
-let handler = async (m, { conn, command }) => {
-
-  if (!global.rssAnime[m.chat])
-    global.rssAnime[m.chat] = { active: false, last: '' }
-
-  if (command == 'rssanimeon') {
-    global.rssAnime[m.chat].active = true
-    conn.reply(m.chat, '✅ RSS anime activado en este chat', m)
-  }
-
-  if (command == 'rssanimeoff') {
-    global.rssAnime[m.chat].active = false
-    conn.reply(m.chat, '❌ RSS anime desactivado en este chat', m)
-  }
-}
-
-handler.command = ['rssanimeon','rssanimeoff']
-handler.admin = true
+handler.command = ['recentfeed']
 
 export default handler
