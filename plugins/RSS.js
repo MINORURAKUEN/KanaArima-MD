@@ -1,46 +1,62 @@
-import Parser from 'rss-parser'
-let parser = new Parser()
-
-// Usando el feed oficial de la web
-const rssURL = 'https://animeav1.com/feed/'
+import axios from 'axios'
+import * as cheerio from 'cheerio'
 
 let handler = async (m, { conn }) => {
   try {
-    // Obtenemos el feed directamente
-    let feed = await parser.parseURL(rssURL)
+    const { data } = await axios.get('https://tioanime.com/', {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      },
+      timeout: 10000
+    })
 
-    if (!feed.items || feed.items.length === 0) {
-      return conn.reply(m.chat, '⚠️ No se encontraron publicaciones en el feed de AnimeAV1.', m)
-    }
+    const $ = cheerio.load(data)
+    let episodes = []
 
-    let text = `✨ *ANIME AV1 - ÚLTIMAS ENTRADAS* ✨\n\n`
+    $('.episodes .list-unstyled li').each((i, el) => {
+      if (i < 5) { 
+        const title = $(el).find('.title').text().trim()
+        const episodeNum = $(el).find('.episode').text().trim()
+        const link = 'https://tioanime.com' + $(el).find('a').attr('href')
+        let thumb = $(el).find('img').attr('src')
+        
+        if (thumb && !thumb.startsWith('http')) {
+          thumb = 'https://tioanime.com' + thumb
+        }
+        
+        episodes.push({ title, episodeNum, link, thumb })
+      }
+    })
 
-    // Tomamos los 5 más recientes
-    let items = feed.items.slice(0, 5)
+    if (episodes.length === 0) return m.reply('⚠️ No se encontraron episodios.')
 
-    for (let item of items) {
-      let title = item.title ? item.title.trim() : 'Sin título'
-      let date = item.pubDate ? new Date(item.pubDate).toLocaleDateString('es-ES') : ''
-      
-      text += `🔹 *${title}*\n`
-      text += `📅 _${date}_\n`
-      text += `🔗 ${item.link}\n`
+    let text = `📺 *TIOANIME - NOVEDADES* 📺\n\n`
+    episodes.forEach((ep, i) => {
+      text += `${i === 0 ? '⭐' : '🔹'} *${ep.title}*\n`
+      text += `🆕 ${ep.episodeNum}\n`
+      text += `🔗 ${ep.link}\n`
       text += `──────────────────\n`
+    })
+
+    const mainImage = episodes[0].thumb
+
+    // INTENTO ENVIAR CON IMAGEN
+    try {
+      if (!mainImage) throw new Error('No hay imagen')
+      await conn.sendFile(m.chat, mainImage, 'error.jpg', text.trim(), m)
+    } catch (imgError) {
+      // SI FALLA LA IMAGEN, ENVÍA SOLO TEXTO
+      console.log('Fallo al enviar imagen, enviando solo texto...')
+      await conn.reply(m.chat, text.trim(), m)
     }
-
-    text += `\n*Fuente:* AnimeAV1`
-
-    await conn.reply(m.chat, text, m)
 
   } catch (e) {
-    console.error('Error en el Feed Directo:', e)
-    conn.reply(m.chat, '❌ Error al leer el feed oficial. Inténtalo de nuevo más tarde.', m)
+    console.error(e)
+    conn.reply(m.chat, '❌ Error al conectar con TioAnime.', m)
   }
 }
 
-handler.help = ['animeav1']
-handler.tags = ['anime']
-handler.command = ['recentfeed', 'animeav1']
+handler.command = ['tioanime', 'recenttio']
 
 export default handler
 
