@@ -4,10 +4,7 @@ import fetch from 'node-fetch'
 const handler = async (m, { conn, client, args, text, command }) => {
     const socket = conn || client
     let query = text || args.join(' ')
-    
-    // Configuración de APIs
-    const apikeyCausa = "causa-0e3eacf90ab7be15"
-    const apikeyEvo = "evogb-9ivSW7OY"
+    const apikey = "causa-0e3eacf90ab7be15"
     
     if (!query) return socket.sendMessage(m.chat, { text: `《✧》 Escribe el nombre o URL del video.` }, { quoted: m })
 
@@ -16,6 +13,7 @@ const handler = async (m, { conn, client, args, text, command }) => {
         const video = search.videos[0]
         if (!video) throw new Error('No se encontró ningún video.')
 
+        // Detectar si el comando pide video
         const isVideo = /play2|mp4|video/.test(command)
         const type = isVideo ? 'mp4' : 'mp3'
 
@@ -27,41 +25,27 @@ const handler = async (m, { conn, client, args, text, command }) => {
 ┃ 🔗 *Link:* ${video.url}
 ╰━━━━━━━━━━━━━━━━⬣`.trim()
 
+        // Enviar miniatura informativa
         await socket.sendMessage(m.chat, { image: { url: video.thumbnail }, caption: captionInfo }, { quoted: m })
         await socket.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
 
-        let downloadUrl = ''
-        let metodo = ''
+        const apiUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(video.url)}&type=${type}`
+        const res = await fetch(apiUrl)
+        const json = await res.json()
 
-        if (isVideo) {
-            // NUEVA API PARA VIDEO: EvoGB
-            const apiEvoUrl = `https://api.evogb.org/dl/ytmp4?apikey=${apikeyEvo}&url=${encodeURIComponent(video.url)}`
-            const res = await fetch(apiEvoUrl)
-            const json = await res.json()
-            
-            // Ajuste según la estructura de respuesta de EvoGB
-            downloadUrl = json.result?.url || json.url || json.download
-            metodo = `Descargado vía: *EvoGB* 🎬`
-        } else {
-            // API PARA AUDIO: RestCausas (Original)
-            const apiCausaUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikeyCausa}&url=${encodeURIComponent(video.url)}&type=mp3`
-            const res = await fetch(apiCausaUrl)
-            const json = await res.json()
-            
-            downloadUrl = json.data?.download?.url || json.result?.download || json.url
-            metodo = `Descargado vía: *RestCausas* 🎵`
-        }
-
+        const downloadUrl = json.data?.download?.url || json.result?.download || json.url
         if (!downloadUrl) throw new Error('La API no devolvió un enlace válido.')
 
         if (isVideo) {
+            // ENVIAR COMO VIDEO (Reproducible directamente en el chat)
             await socket.sendMessage(m.chat, { 
-                document: { url: downloadUrl }, 
+                video: { url: downloadUrl }, 
+                caption: `🎬 *${video.title}*\n\nDescargado vía: *RestCausas* ✅`,
                 mimetype: 'video/mp4',
-                fileName: `${video.title}.mp4`,
-                caption: `🎬 *Aquí tienes tu video*\n\n${metodo}`
+                fileName: `${video.title}.mp4`
             }, { quoted: m })
         } else {
+            // ENVIAR COMO AUDIO (Solo si el comando es play/mp3)
             await socket.sendMessage(m.chat, { 
                 audio: { url: downloadUrl }, 
                 mimetype: 'audio/mpeg',
@@ -72,15 +56,13 @@ const handler = async (m, { conn, client, args, text, command }) => {
         await socket.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
 
     } catch (e) {
-        console.error(e)
         await socket.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
         socket.sendMessage(m.chat, { text: `❌ *Error:* ${e.message}` }, { quoted: m })
     }
 }
 
-handler.help = ['play', 'play2']
+handler.help = ['play', 'play2', 'mp4']
 handler.tags = ['downloader']
 handler.command = /^(play|play2|mp3|video|mp4)$/i
 
 export default handler
-
