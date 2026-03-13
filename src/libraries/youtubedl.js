@@ -1,129 +1,314 @@
 import axios from 'axios';
 import crypto from 'crypto';
 
-/**
- * Lógica del Scraper OGMP3
- * Maneja cifrado, bypass de restricciones y polling de estado
- */
 const ogmp3 = {
-   api: {
-      base: "https://api3.apiapi.lat",
-      endpoints: ["https://api5.apiapi.lat", "https://api.apiapi.lat", "https://api3.apiapi.lat"]
-   },
-   headers: {
-      'authority': 'api.apiapi.lat',
-      'accept': 'application/json',
-      'origin': 'https://ogmp3.lat',
-      'referer': 'https://ogmp3.lat/',
-      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-   },
-   utils: {
-      hash: () => crypto.randomBytes(16).toString('hex'),
-      encoded: (str) => str.split('').map(c => String.fromCharCode(c.charCodeAt(0) ^ 1)).join(''),
-      enc_url: (url) => url.split('').map(c => c.charCodeAt(0)).reverse().join(',')
-   },
-   ytId: (url) => {
-      const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:v\/|u\/\w\/|embed\/|watch\?v=)|youtube\.com\/shorts\/)([^#&?]*).*/);
-      return (match && match[1].length === 11) ? match[1] : null;
-   },
-   async download(link, type = 'video') {
-      const id = this.ytId(link);
-      const q = type === 'audio' ? '320' : '720';
-      const baseApi = this.api.endpoints[Math.floor(Math.random() * this.api.endpoints.length)];
+  api: {
+    base: "https://api3.apiapi.lat",
+    endpoints: {
+      a: "https://api5.apiapi.lat",
+      b: "https://api.apiapi.lat",
+      c: "https://api3.apiapi.lat"
+    }
+  },
+
+  headers: {
+    'authority': 'api.apiapi.lat',
+    'content-type': 'application/json',
+    'origin': 'https://ogmp3.lat',
+    'referer': 'https://ogmp3.lat/',
+    'user-agent': 'Postify/1.0.0'
+  },
+ 
+  formats: {
+    video: ['240', '360', '480', '720', '1080'],
+    audio: ['64', '96', '128', '192', '256', '320']
+  },
+
+  default_fmt: {
+    video: '720',
+    audio: '320'
+  },
+
+  restrictedTimezones: new Set(["-330", "-420", "-480", "-540"]),
+
+  utils: {
+    hash: () => {
+      const array = new Uint8Array(16);
+      crypto.getRandomValues(array);
+      return Array.from(array, byte => byte.toString(16).padStart(2, "0")).join("");
+    },
+
+    encoded: (str) => {
+      let result = "";
+      for (let i = 0; i < str.length; i++) {
+        result += String.fromCharCode(str.charCodeAt(i) ^ 1);
+      }
+      return result;
+    },
+
+    enc_url: (url, separator = ",") => {
+      const codes = [];
+      for (let i = 0; i < url.length; i++) {
+        codes.push(url.charCodeAt(i));
+      }
+      return codes.join(separator).split(separator).reverse().join(separator);
+    }
+  },
+
+  isUrl: str => {
+    try {
+      const url = new URL(str);
+      const hostname = url.hostname.toLowerCase();
+      const b = [/^(.+\.)?youtube\.com$/, /^(.+\.)?youtube-nocookie\.com$/, /^youtu\.be$/];
+      return b.some(a => a.test(hostname)) && !url.searchParams.has("playlist");
+    } catch (_) {
+      return false;
+    }
+  },
+
+  youtube: url => {
+    if (!url) return null;
+    const b = [
+      /youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/,
+      /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
+      /youtube\.com\/v\/([a-zA-Z0-9_-]{11})/,
+      /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
+      /youtu\.be\/([a-zA-Z0-9_-]{11})/
+    ];
+    for (let a of b) {
+      if (a.test(url)) return url.match(a)[1];
+    }
+    return null;
+  },
+
+  request: async (endpoint, data = {}, method = 'post') => {
+    try {
+      const ae = Object.values(ogmp3.api.endpoints);
+      const be = ae[Math.floor(Math.random() * ae.length)];
       
-      try {
-         const c = this.utils.hash(), d = this.utils.hash();
-         const res = await axios.post(`${baseApi}/${c}/init/${this.utils.enc_url(link)}/${d}/`, {
-            data: this.utils.encoded(link),
-            format: type === 'audio' ? "0" : "1",
-            mp3Quality: type === 'audio' ? q : null,
-            mp4Quality: type === 'video' ? q : null,
-            userTimeZone: "-300"
-         }, { headers: this.headers });
+      const fe = endpoint.startsWith('http') ? endpoint : `${be}${endpoint}`;
 
-         let data = res.data;
+      const { data: response } = await axios({
+        method,
+        url: fe,
+        data: method === 'post' ? data : undefined,
+        headers: ogmp3.headers
+      });
+      return {
+        status: true,
+        code: 200,
+        data: response
+      };
+    } catch (error) {
+      return {
+        status: false,
+        code: error.response?.status || 500,
+        error: error.message
+      };
+    }
+  },
 
-         // Sistema de Polling (Espera activa hasta que el archivo esté listo)
-         if (data.s === "P" || !data.s) {
-            for (let i = 0; i < 20; i++) {
-               await new Promise(r => setTimeout(r, 2000));
-               const check = await axios.post(`${baseApi}/${this.utils.hash()}/status/${this.utils.encoded(data.i)}/${this.utils.hash()}/`, { data: data.i }, { headers: this.headers });
-               if (check.data.s === "C") { 
-                  data = check.data; 
-                  break; 
-               }
-            }
-         }
+  async checkStatus(id) {
+    try {
+      const c = this.utils.hash();
+      const d = this.utils.hash();
+      const endpoint = `/${c}/status/${this.utils.encoded(id)}/${d}/`;
 
-         if (data.s !== "C") return { status: false, error: "El video es muy largo o el servidor no respondió." };
+      const response = await this.request(endpoint, {
+        data: id
+      });
 
-         return {
+      return response;
+    } catch (error) {
+      return {
+        status: false,
+        code: 500,
+        error: error.message
+      };
+    }
+  },
+
+  async checkProgress(data) {
+    try {
+      let attempts = 0;
+      let maxAttempts = 300;
+
+      while (attempts < maxAttempts) {
+        attempts++;
+
+        const res = await this.checkStatus(data.i);
+        if (!res.status) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          continue;
+        }
+
+        const stat = res.data;
+        if (stat.s === "C") {
+          return stat;
+        }
+
+        if (stat.s === "P") {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          continue;
+        }
+
+        return null;
+      }
+
+      return null;
+    } catch (error) {
+      return null;
+    }
+  },
+
+  download: async (link, format, type = 'video') => {
+    if (!link) {
+      return {
+        status: false,
+        code: 400,
+        error: "¿Que es lo que descarga? ingresa en link idiota"
+      };
+    }
+
+    if (!ogmp3.isUrl(link)) {
+      return {
+        status: false,
+        code: 400,
+        error: "Ese link es invalido pon en link de un video de youtube valido idiotas 🗿"
+      };
+    }
+
+    if (type !== 'video' && type !== 'audio') {
+      return {
+        status: false,
+        code: 400,
+        error: "Elejir video o audio?"
+      };
+    }
+
+    if (!format) {
+      format = type === 'audio' ? ogmp3.default_fmt.audio : ogmp3.default_fmt.video;
+    }
+
+    const valid_fmt = type === 'audio' ? ogmp3.formats.audio : ogmp3.formats.video;
+    if (!valid_fmt.includes(format)) {
+      return {
+        status: false,
+        code: 400,
+        error: `Formato ${format} no es valido para ${type} pero puedes elegir unos de estos: ${valid_fmt.join(', ')}`
+      };
+    }
+
+    const id = ogmp3.youtube(link);
+    if (!id) {
+      return {
+        status: false,
+        code: 400,
+        error: "Donde pito esta la ID del video? no puedo extraerlo hdp"
+      };
+    }
+
+    try {
+      let retries = 0;
+      const maxRetries = 20;
+
+      while (retries < maxRetries) {
+        retries++;
+        const c = ogmp3.utils.hash();
+        const d = ogmp3.utils.hash();
+        const req = {
+          data: ogmp3.utils.encoded(link),
+          format: type === 'audio' ? "0" : "1",
+          referer: "https://ogmp3.cc",
+          mp3Quality: type === 'audio' ? format : null,
+          mp4Quality: type === 'video' ? format : null,
+          userTimeZone: new Date().getTimezoneOffset().toString()
+        };
+
+        const resx = await ogmp3.request(
+          `/${c}/init/${ogmp3.utils.enc_url(link)}/${d}/`,
+          req
+        );
+
+        if (!resx.status) {
+          if (retries === maxRetries) return resx;
+          continue;
+        }
+
+        const data = resx.data;
+        if (data.le) {
+          return {
+            status: false,
+            code: 400,
+            error: "La duración del video es demasiado larga, amigo. El máximo es de 3 horas, no puedes superar eso, ¿entendido? 👍🏻"
+          };
+        }
+
+        if (data.i === "blacklisted") {
+          const limit = ogmp3.restrictedTimezones.has(new Date().getTimezoneOffset().toString()) ? 5 : 100;
+          return {
+            status: false,
+            code: 429,
+            error: `Limite de descargas diarias (${limit}) alcanzados, intente de nuevo mas tardes.`
+          };
+        }
+
+        if (data.e || data.i === "invalid") {
+          return {
+            status: false,
+            code: 400,
+            error: "El video no existe, idiota. No sé si fue eliminado o si YouTube lo restringió... no tengo idea 🤷🏻"
+          };
+        }
+
+        if (data.s === "C") {
+          return {
             status: true,
-            title: data.t || "YouTube Media",
-            quality: q,
-            thumbnail: `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
-            url: `${this.api.base}/${this.utils.hash()}/download/${this.utils.encoded(data.i)}/${this.utils.hash()}/`
-         };
-      } catch (e) { 
-         return { status: false, error: e.message }; 
+            code: 200,
+            result: {
+              title: data.t || "Kagak tau",
+              type: type,
+              format: format,
+              thumbnail: `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
+              download: `${ogmp3.api.base}/${ogmp3.utils.hash()}/download/${ogmp3.utils.encoded(data.i)}/${ogmp3.utils.hash()}/`,
+              id: id,
+              quality: format
+            }
+          };
+        }
+
+        const prod = await ogmp3.checkProgress(data);
+        if (prod && prod.s === "C") {
+          return {
+            status: true,
+            code: 200,
+            result: {
+              title: prod.t || "Kagak tau",
+              type: type,
+              format: format,
+              thumbnail: `https://i.ytimg.com/vi/${id}/maxresdefault.jpg`,
+              download: `${ogmp3.api.base}/${ogmp3.utils.hash()}/download/${ogmp3.utils.encoded(prod.i)}/${ogmp3.utils.hash()}/`,
+              id: id,
+              quality: format
+            }
+          };
+        }
       }
-   }
+
+      return {
+        status: false,
+        code: 500,
+        error: "Estoy exhausto, idiota... Ya intenté hacer la solicitud varias veces y sigue sin funcionar, así que dejaré la solicitud para más tarde, ¡hasta luego! 😂"
+      };
+
+    } catch (error) {
+      return {
+        status: false,
+        code: 500,
+        error: error.message
+      };
+    }
+  }
 };
 
-/**
- * Configuración del Comando para el Bot
- */
-export const run = {
-   usage: ['ytmp3', 'ytmp4', 'yta', 'ytv'],
-   use: 'link',
-   category: 'downloader',
-   async: async (m, { client, args, isPrefix, command, Utils, Config }) => {
-      try {
-         // Validar link
-         const url = args[0];
-         if (!url || !ogmp3.ytId(url)) {
-            return client.reply(m.chat, `⚠️ Modo de uso:\n${isPrefix + command} https://youtu.be/dQw4w9WgXcQ`, m);
-         }
-
-         // Reacción de espera
-         await client.sendReact(m.chat, '🕒', m.key);
-
-         // Identificar si el usuario quiere audio o video
-         const isAudio = /mp3|yta/i.test(command);
-         const type = isAudio ? 'audio' : 'video';
-
-         // Obtener descarga
-         const result = await ogmp3.download(url, type);
-
-         if (!result.status) {
-            return client.reply(m.chat, `❌ Error: ${result.error}`, m);
-         }
-
-         // Mensaje de información
-         let caption = `乂  *Y O U T U B E  D L*\n\n`;
-         caption += `	◦  *Título* : ${result.title}\n`;
-         caption += `	◦  *Calidad* : ${result.quality}${isAudio ? 'kbps' : 'p'}\n`;
-         caption += `	◦  *Formato* : ${type.toUpperCase()}\n\n`;
-         caption += global.footer || '© Causas API';
-
-         // Enviar miniatura con información del video
-         await client.sendMessageModify(m.chat, caption, m, {
-            largeThumb: true,
-            thumbnail: await Utils.fetchAsBuffer(result.thumbnail)
-         });
-
-         // Enviar el archivo final (Audio como documento, Video como multimedia)
-         return client.sendFile(m.chat, result.url, `${result.title}.${isAudio ? 'mp3' : 'mp4'}`, '', m, {
-            document: isAudio,
-            mimetype: isAudio ? 'audio/mpeg' : 'video/mp4'
-         });
-
-      } catch (e) {
-         console.error(e);
-         return client.reply(m.chat, `❌ Ocurrió un fallo inesperado.`, m);
-      }
-   },
-   error: false,
-   limit: true
-};
-
+export { ogmp3 };
