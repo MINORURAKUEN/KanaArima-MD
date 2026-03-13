@@ -1,51 +1,45 @@
 import Parser from 'rss-parser'
+let parser = new Parser()
 
-// Configuramos el parser con un User-Agent de navegador real
-let parser = new Parser({
-  requestOptions: {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36',
-      'Accept': 'application/rss+xml, application/atom+xml, text/xml'
-    },
-    timeout: 10000 // 10 segundos de espera antes de dar error
-  }
-})
-
-const rssURL = 'https://rss-proxy.madbots.dev/api/w2f?v=0.1&url=https%3A%2F%2Fanimeav1.com%2F&link=.%2Fa%5B1%5D&context=%2F%2Fdiv%5B1%5D%2Fdiv%5B2%5D%2Fmain%5B1%5D%2Fsection%2Fdiv%5B1%5D%2Farticle&re=none&out=atom'
+// Usando el feed oficial de la web
+const rssURL = 'https://animeav1.com/feed/'
 
 let handler = async (m, { conn }) => {
   try {
-    // Intentamos obtener el feed
+    // Obtenemos el feed directamente
     let feed = await parser.parseURL(rssURL)
 
-    if (!feed?.items?.length) {
-      return conn.reply(m.chat, '⚠️ El servidor respondió pero no hay noticias nuevas.', m)
+    if (!feed.items || feed.items.length === 0) {
+      return conn.reply(m.chat, '⚠️ No se encontraron publicaciones en el feed de AnimeAV1.', m)
     }
 
-    let text = `✨ *ANIME AV1 - RECIENTES* ✨\n\n`
+    let text = `✨ *ANIME AV1 - ÚLTIMAS ENTRADAS* ✨\n\n`
 
-    feed.items.slice(0, 5).forEach((item) => {
-      text += `🔹 *${item.title.trim()}*\n`
+    // Tomamos los 5 más recientes
+    let items = feed.items.slice(0, 5)
+
+    for (let item of items) {
+      let title = item.title ? item.title.trim() : 'Sin título'
+      let date = item.pubDate ? new Date(item.pubDate).toLocaleDateString('es-ES') : ''
+      
+      text += `🔹 *${title}*\n`
+      text += `📅 _${date}_\n`
       text += `🔗 ${item.link}\n`
       text += `──────────────────\n`
-    })
+    }
 
-    await conn.reply(m.chat, text.trim(), m)
+    text += `\n*Fuente:* AnimeAV1`
+
+    await conn.reply(m.chat, text, m)
 
   } catch (e) {
-    console.error('RSS Error:', e)
-    
-    // Mensaje de error más detallado para debug
-    let errorMessage = '❌ Error de conexión.\n\n'
-    if (e.message.includes('403')) errorMessage += 'Causa: Acceso denegado (403).'
-    else if (e.message.includes('404')) errorMessage += 'Causa: El proxy no encontró la página.'
-    else if (e.message.includes('timeout')) errorMessage += 'Causa: Tiempo de espera agotado.'
-    else errorMessage += `Detalle: ${e.message}`
-
-    conn.reply(m.chat, errorMessage, m)
+    console.error('Error en el Feed Directo:', e)
+    conn.reply(m.chat, '❌ Error al leer el feed oficial. Inténtalo de nuevo más tarde.', m)
   }
 }
 
+handler.help = ['animeav1']
+handler.tags = ['anime']
 handler.command = ['recentfeed', 'animeav1']
 
 export default handler
