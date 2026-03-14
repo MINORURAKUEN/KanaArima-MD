@@ -1,81 +1,118 @@
-import yts from 'yt-search'
+import fs from 'fs'
 import fetch from 'node-fetch'
+import yts from 'yt-search'
 
-const handler = async (m, { conn, client, args, text, command }) => {
-    // Compatibilidad por si usas 'conn' o 'client' en tu base
-    const socket = conn || client
-    let query = text || args.join(' ')
-    
-    // Tu API Key de RestCausas (Recomendación: Mover a un archivo .env en el futuro)
-    const apikey = process.env.API_CAUSAS || "causa-0e3eacf90ab7be15"
-    
-    // Validar si el usuario ingresó un texto o enlace
-    if (!query) return socket.sendMessage(m.chat, { text: `《✧》 Escribe el nombre o URL del video.\n\n*Ejemplo:* .play Linkin Park` }, { quoted: m })
+let handler = async (m, { conn, args, text, usedPrefix, command }) => {
+  const datas = global;
+  const idioma = datas.db.data.users[m.sender].language || global.defaultLenguaje;
+  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
+  const tradutor = _translate.plugins.descargas_play
 
-    try {
-        // 1. Buscar en YouTube
-        const search = await yts(query)
-        const video = search.videos[0]
-        if (!video) throw new Error('No se encontró ningún video con esa búsqueda.')
+  // 1. Validación de texto
+  if (!text) throw `${tradutor.texto1[0]} ${usedPrefix + command} ${tradutor.texto1[1]}`;      
 
-        // 2. Detectar si el comando pide video (mp4) o audio (mp3)
-        const isVideo = /play2|mp4|video/i.test(command)
-        const type = isVideo ? 'video' : 'audio' // Asegurado para la API
+  // 2. Determinar tipo de contenido y formato de salida
+  const isVideo = ['play2', 'ytmp4', 'ytmp4doc'].includes(command);
+  const isDoc = ['ytmp4doc', 'ytmp3doc'].includes(command);
+  const typeLabel = isVideo ? 'vídeo' : 'audio';
 
-        // 3. Crear el texto de información
-        const captionInfo = `╭━━━〔 🎵 YOUTUBE ${isVideo ? 'VIDEO' : 'AUDIO'} 〕━━━⬣
-┃ 📌 *Título:* ${video.title}
-┃ ⏱ *Duración:* ${video.timestamp}
-┃ 👀 *Vistas:* ${video.views.toLocaleString()}
-┃ 👤 *Canal:* ${video.author.name}
-┃ 🔗 *Link:* ${video.url}
-╰━━━━━━━━━━━━━━━━⬣`.trim()
+  // 3. Búsqueda en YouTube
+  const result = await search(args.join(' '));
+  if (!result) throw '❌ No se encontraron resultados para tu búsqueda.';
 
-        // 4. Enviar miniatura informativa y reaccionar con reloj
-        await socket.sendMessage(m.chat, { image: { url: video.thumbnail }, caption: captionInfo }, { quoted: m })
-        await socket.sendMessage(m.chat, { react: { text: '⏳', key: m.key } })
+  const youtubeUrl = `https://www.youtube.com/watch?v=${result.videoId}`;
+  
+  // 4. Mensaje informativo con miniatura
+  const body = `
+${tradutor.texto2[0]} ${result.title}
+${tradutor.texto2[1]} ${result.ago}
+${tradutor.texto2[2]} ${result.duration.timestamp}
+${tradutor.texto2[3]} ${formatNumber(result.views)}
+${tradutor.texto2[4]} ${result.author.name}
+${tradutor.texto2[5]} ${result.videoId}
+${tradutor.texto2[7]} ${result.url}
 
-        // 5. Consultar la API de descargas
-        const apiUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(video.url)}&type=${type}`
-        const res = await fetch(apiUrl)
-        const json = await res.json()
+*Enviando:* ${typeLabel} ${isDoc ? '(Documento)' : ''}
+`.trim();
 
-        // 6. Extraer el enlace de descarga de la respuesta JSON
-        const downloadUrl = json.data?.download?.url || json.result?.download || json.url
-        if (!downloadUrl) throw new Error('La API no devolvió un enlace de descarga válido.')
+  await conn.sendMessage(m.chat, { image: { url: result.thumbnail }, caption: body }, { quoted: m });
 
-        // 7. Enviar el archivo final
-        if (isVideo) {
-            // ENVIAR COMO VIDEO
-            await socket.sendMessage(m.chat, { 
-                video: { url: downloadUrl }, 
-                caption: `🎬 *${video.title}*\n\nDescargado vía: *RestCausas* ✅`,
-                mimetype: 'video/mp4',
-                fileName: `${video.title}.mp4`
-            }, { quoted: m })
-        } else {
-            // ENVIAR COMO AUDIO
-            await socket.sendMessage(m.chat, { 
-                audio: { url: downloadUrl }, 
-                mimetype: 'audio/mpeg',
-                fileName: `${video.title}.mp3`
-            }, { quoted: m })
-        }
+  // 5. Lógica de descarga y envío
+  try {
+    let downloadUrl = null;
 
-        // Reacción de éxito
-        await socket.sendMessage(m.chat, { react: { text: '✅', key: m.key } })
+    if (isVideo) {
+      // --- Lógica para VIDEO ---
+      try {
+        const videodlp = await tools.downloader.ytmp4(youtubeUrl);
+        downloadUrl = videodlp.download;
+      } catch (err) {
+        console.log('Falla tools.downloader, intentando Ruby-core...');
+        const ruby = await (await fetch(`https://ruby-core.vercel.app/api/download/youtube/mp4?url=${encodeURIComponent(youtubeUrl)}`)).json();
+        downloadUrl = ruby?.download?.url;
+      }
 
-    } catch (e) {
-        // Reacción de error y mensaje
-        await socket.sendMessage(m.chat, { react: { text: '❌', key: m.key } })
-        socket.sendMessage(m.chat, { text: `❌ *Error:* ${e.message}` }, { quoted: m })
+      if (!downloadUrl) throw new Error('No se pudo obtener enlace de descarga');
+
+      if (isDoc) {
+        await conn.sendMessage(m.chat, { 
+          document: { url: downloadUrl }, 
+          fileName: `${result.title}.mp4`, 
+          mimetype: 'video/mp4' 
+        }, { quoted: m });
+      } else {
+        await conn.sendMessage(m.chat, { 
+          video: { url: downloadUrl }, 
+          fileName: `${result.title}.mp4`, 
+          mimetype: 'video/mp4' 
+        }, { quoted: m });
+      }
+
+    } else {
+      // --- Lógica para AUDIO ---
+      try {
+        const audiodlp = await tools.downloader.ytmp3(youtubeUrl);
+        downloadUrl = audiodlp.download;
+      } catch (err) {
+        console.log('Falla tools.downloader, intentando Ruby-core...');
+        const ruby = await (await fetch(`https://ruby-core.vercel.app/api/download/youtube/mp3?url=${encodeURIComponent(youtubeUrl)}`)).json();
+        downloadUrl = ruby?.download?.url;
+      }
+
+      if (!downloadUrl) throw new Error('No se pudo obtener enlace de descarga');
+
+      if (isDoc) {
+        await conn.sendMessage(m.chat, { 
+          document: { url: downloadUrl }, 
+          fileName: `${result.title}.mp3`, 
+          mimetype: 'audio/mpeg' 
+        }, { quoted: m });
+      } else {
+        await conn.sendMessage(m.chat, { 
+          audio: { url: downloadUrl }, 
+          mimetype: 'audio/mpeg' 
+        }, { quoted: m });
+      }
     }
+
+  } catch (error) {
+    console.error(error);
+    conn.reply(m.chat, tradutor.texto6 || '❌ Error al procesar la descarga.', m);
+  }
+};
+
+handler.help = ['play', 'play2', 'playaudio', 'ytmp3', 'ytmp4', 'ytmp3doc', 'ytmp4doc'];
+handler.tags = ['downloader'];
+handler.command = /^(play|play2|playaudio|ytmp3|ytmp4|ytmp3doc|ytmp4doc)$/i;
+
+export default handler;
+
+// Funciones auxiliares
+async function search(query, options = {}) {
+  const searchRes = await yts.search({ query, hl: 'es', gl: 'ES', ...options });
+  return searchRes.videos[0];
 }
 
-// Configuración del comando para el bot
-handler.help = ['play', 'play2', 'mp4', 'mp3', 'video']
-handler.tags = ['downloader']
-handler.command = /^(play|play2|mp3|video|mp4)$/i
-
-export default handler
-  
+function formatNumber(num) {
+  return num ? num.toLocaleString() : '0';
+}
