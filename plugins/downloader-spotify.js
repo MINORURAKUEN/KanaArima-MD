@@ -3,28 +3,28 @@ import fs from 'fs';
 
 let handler = async (m, { conn, text, usedPrefix, command }) => {
   const datas = global;
-  const idioma = datas.db.data.users[m.sender].language || global.defaultLenguaje;
+  const idioma = datas.db.data.users[m.sender]?.language || global.defaultLenguaje;
   const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
   const tradutor = _translate.plugins.descargas_spotify;
 
   if (!text) return m.reply(`${tradutor.texto1} _${usedPrefix + command} Good Feeling - Flo Rida_`);
 
   try {
-    // 1. Buscar la canción para obtener la URL de Spotify
+    // 1. Buscar la canción
     let songInfo = await spotifyxv(text);
     if (!songInfo.length) return m.reply(tradutor.texto2);
     let song = songInfo[0];
 
-    await m.reply(`*[⏳] Buscando y procesando: ${song.name}...*`);
+    await m.reply(`*[⏳] Procesando descarga: ${song.name}...*`);
 
     const apiKey = "causa-0e3eacf90ab7be15";
     const encodedUrl = encodeURIComponent(song.url);
     
-    // 2. Intentar descarga con la nueva API (apicausas)
     let downloadData = null;
+
+    // 2. Intento con API principal (apicausas)
     try {
       const res = await axios.get(`https://rest.apicausas.xyz/api/v1/descargas/spotify?apikey=${apiKey}&url=${encodedUrl}`);
-      // Adaptamos al formato de respuesta de la nueva API
       if (res.data?.status && res.data?.resultado) {
         downloadData = {
           title: res.data.resultado.titulo || song.name,
@@ -38,7 +38,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       console.error('Error en API apicausas:', e.message);
     }
 
-    // 3. Fallback a la API de Stellar (por si la nueva falla)
+    // 3. Fallback a Stellar si la primera falla
     if (!downloadData) {
       const resFallback = await axios.get(`${global.APIs.stellar}/dow/spotify?url=${song.url}&apikey=${global.APIKeys[global.APIs.stellar]}`);
       if (resFallback.data?.data?.download) {
@@ -53,9 +53,9 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       }
     }
 
-    if (!downloadData || !downloadData.download) return m.reply(tradutor.texto3);
+    if (!downloadData || !downloadData.download) throw 'No se pudo obtener el enlace de descarga.';
 
-    // 4. Construcción del mensaje informativo
+    // 4. Construcción del texto (Asegurando que sea String para evitar el error text.match)
     let spotifyi = ` _${tradutor.texto2[0]}_\n\n`;
     spotifyi += ` ${tradutor.texto2[1]} ${downloadData.title}\n`;
     spotifyi += ` ${tradutor.texto2[2]} ${downloadData.artist}\n`; 
@@ -63,9 +63,9 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     spotifyi += ` ${tradutor.texto2[4]} ${downloadData.duration}\n\n`;
     spotifyi += `> ${tradutor.texto2[5]}`;
 
-    // 5. Enviar portada y detalles
+    // 5. Envío del mensaje con miniatura (Solución al error de Baileys)
     await conn.sendMessage(m.chat, {
-      text: spotifyi.trim(),
+      text: String(spotifyi.trim()), // Forzamos String aquí
       contextInfo: {
         forwardingScore: 9999999,
         isForwarded: true,
@@ -73,7 +73,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
           showAdAttribution: true,
           containsAutoReply: true,
           renderLargerThumbnail: true,
-          title: 'Spotify Downloader',
+          title: global.titulowm2 || 'Spotify Downloader',
           mediaType: 1,
           thumbnailUrl: downloadData.image,
           mediaUrl: song.url,
@@ -82,7 +82,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
       }
     }, { quoted: m });
 
-    // 6. Enviar el archivo de audio
+    // 6. Envío del Audio
     await conn.sendMessage(m.chat, {
       audio: { url: downloadData.download },
       fileName: `${downloadData.title}.mp3`,
@@ -104,9 +104,7 @@ async function spotifyxv(query) {
   try {
     const res = await axios.get(`${global.APIs.stellar}/search/spotify?query=${query}&apikey=${global.APIKeys[global.APIs.stellar]}`, { responseType: 'json' });
     if (!res.data?.status || !res.data?.data?.length) return [];
-
     const firstTrack = res.data.data[0];
-
     return [{
       name: firstTrack.title,
       artista: [firstTrack.artist],
