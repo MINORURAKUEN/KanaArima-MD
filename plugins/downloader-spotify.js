@@ -1,135 +1,80 @@
-import axios from 'axios';
-import fs from 'fs';
+const axios = require('axios');
 
-let handler = async (m, { conn, text, usedPrefix, command }) => {
-  const datas = global;
-  const idioma = datas.db.data.users[m.sender]?.language || global.defaultLenguaje;
-  const _translate = JSON.parse(fs.readFileSync(`./src/languages/${idioma}.json`));
-  const tradutor = _translate.plugins.descargas_spotify;
-
-  if (!text) return m.reply(`${tradutor.texto1} _${usedPrefix + command} Good Feeling - Flo Rida_`);
-
-  try {
-    // 1. Buscar la canción
-    let songInfo = await spotifyxv(text);
-    if (!songInfo || !songInfo.length) return m.reply(tradutor.texto2);
-    let song = songInfo[0];
-
-    await m.reply(`*[⏳] Procesando descarga: ${song.name}...*`);
-
-    const apiKey = "causa-0e3eacf90ab7be15";
-    const encodedUrl = encodeURIComponent(song.url);
-    
-    let downloadData = null;
-
-    // 2. Intento con API principal (apicausas)
+async function spotifyCommand(sock, chatId, message) {
     try {
-      const res = await axios.get(`https://rest.apicausas.xyz/api/v1/descargas/spotify?apikey=${apiKey}&url=${encodedUrl}`);
-      if (res.data?.status && res.data?.resultado) {
-        downloadData = {
-          title: res.data.resultado.titulo || song.name,
-          artist: res.data.resultado.artista || song.artista[0],
-          image: res.data.resultado.portada || song.imagen,
-          download: res.data.resultado.url,
-          duration: song.duracion || 'N/A'
-        };
-      }
-    } catch (e) {
-      console.error('Error en API apicausas:', e.message);
-    }
+        const rawText = message.message?.conversation?.trim() ||
+            message.message?.extendedTextMessage?.text?.trim() ||
+            message.message?.imageMessage?.caption?.trim() ||
+            message.message?.videoMessage?.caption?.trim() ||
+            '';
 
-    // 3. Fallback a Stellar si la primera falla
-    if (!downloadData) {
-      try {
-        const resFallback = await axios.get(`${global.APIs.stellar}/dow/spotify?url=${song.url}&apikey=${global.APIKeys[global.APIs.stellar]}`);
-        if (resFallback.data?.data?.download) {
-          const dataF = resFallback.data.data;
-          downloadData = {
-            title: dataF.title,
-            artist: dataF.artist,
-            image: dataF.image,
-            download: dataF.download,
-            duration: dataF.duration
-          };
+        const used = (rawText || '').split(/\s+/)[0] || '.spotify';
+        const query = rawText.slice(used.length).trim();
+
+        if (!query) {
+            await sock.sendMessage(chatId, { text: '⚠️ *Uso:* .spotify <nombre de la canción>' }, { quoted: message });
+            return;
         }
-      } catch (e) {
-        console.error('Error en Fallback Stellar:', e.message);
-      }
-    }
 
-    if (!downloadData || !downloadData.download) throw 'No se pudo obtener el enlace de descarga.';
+        // 1. Informar al usuario
+        await sock.sendMessage(chatId, { text: '*[⏳] Buscando y procesando en Spotify...*' }, { quoted: message });
 
-    // 4. Construcción del texto segura
-    // Usamos variables de respaldo por si el traductor falla
-    const txt0 = tradutor.texto2?.[0] || 'Spotify Download';
-    const txt1 = tradutor.texto2?.[1] || 'Título:';
-    const txt2 = tradutor.texto2?.[2] || 'Artista:';
-    const txt3 = tradutor.texto2?.[3] || 'Álbum:';
-    const txt4 = tradutor.texto2?.[4] || 'Duración:';
-    const txt5 = tradutor.texto2?.[5] || 'Descargando audio...';
+        // 2. Obtener datos de la API (Usando apicausas como prioridad)
+        const apiKey = "causa-0e3eacf90ab7be15";
+        // Nota: Primero necesitamos buscar la URL de la canción. 
+        // Usaremos tu API actual de búsqueda para obtener el link de Spotify.
+        const searchUrl = `https://okatsu-rolezapiiz.vercel.app/search/spotify?q=${encodeURIComponent(query)}`;
+        const { data: searchData } = await axios.get(searchUrl);
 
-    let spotifyi = ` _${txt0}_\n\n`;
-    spotifyi += ` ${txt1} ${downloadData.title}\n`;
-    spotifyi += ` ${txt2} ${downloadData.artist}\n`; 
-    spotifyi += ` ${txt3} ${song.album || 'N/A'}\n`;
-    spotifyi += ` ${txt4} ${downloadData.duration}\n\n`;
-    spotifyi += `> ${txt5}`;
-
-    // 5. Envío del mensaje con miniatura (SOLUCIÓN DEFINITIVA)
-    // Nos aseguramos de que TODO en contextInfo sea válido
-    await conn.sendMessage(m.chat, {
-      text: spotifyi.trim(),
-    }, { 
-      quoted: m,
-      contextInfo: {
-        forwardingScore: 99,
-        isForwarded: true,
-        externalAdReply: {
-          showAdAttribution: true,
-          renderLargerThumbnail: true,
-          title: downloadData.title.slice(0, 40), // Evitamos títulos gigantes
-          body: downloadData.artist.slice(0, 40),
-          mediaType: 1,
-          thumbnailUrl: downloadData.image || 'https://i.ibb.co/3S7mY8V/spotify.jpg', 
-          sourceUrl: song.url
+        if (!searchData?.status || !searchData?.result) {
+            throw new Error('No se encontraron resultados.');
         }
-      }
-    });
 
-    // 6. Envío del Audio
-    await conn.sendMessage(m.chat, {
-      audio: { url: downloadData.download },
-      fileName: `${downloadData.title}.mp3`,
-      mimetype: 'audio/mpeg'
-    }, { quoted: m });
+        const track = searchData.result;
+        const spotifyUrl = track.url; // URL original de Spotify
 
-  } catch (e) {
-    console.error('Error fatal en handler:', e);
-    // Enviar error simple sin externalAdReply para evitar bucles de crash
-    m.reply(tradutor.texto3 || 'Ocurrió un error inesperado.');
-  }
-};
+        // 3. Descargar usando la nueva API
+        const downloadApi = `https://rest.apicausas.xyz/api/v1/descargas/spotify?apikey=${apiKey}&url=${encodeURIComponent(spotifyUrl)}`;
+        const { data: dlRes } = await axios.get(downloadApi);
 
-handler.help = ['spotify <text>'];
-handler.tags = ['downloader'];
-handler.command = ['spotify', 'music'];
-export default handler;
+        let finalAudio = track.audio; // Fallback al audio original
+        let finalTitle = track.title || track.name || 'Desconocido';
+        let finalImage = track.thumbnails || '';
 
-async function spotifyxv(query) {
-  try {
-    const res = await axios.get(`${global.APIs.stellar}/search/spotify?query=${query}&apikey=${global.APIKeys[global.APIs.stellar]}`, { responseType: 'json' });
-    if (!res.data?.status || !res.data?.data?.length) return [];
-    const firstTrack = res.data.data[0];
-    return [{
-      name: firstTrack.title || 'Unknown',
-      artista: [firstTrack.artist || 'Unknown'],
-      album: firstTrack.album || 'N/A',
-      duracion: firstTrack.duration || 'N/A',
-      url: firstTrack.url || '',
-      imagen: firstTrack.image || ''
-    }];
-  } catch {
-    return [];
-  }
-      }
-    
+        if (dlRes?.status && dlRes?.resultado) {
+            finalAudio = dlRes.resultado.url || finalAudio;
+            finalTitle = dlRes.resultado.titulo || finalTitle;
+            finalImage = dlRes.resultado.portada || finalImage;
+        }
+
+        if (!finalAudio) throw new Error('No se pudo obtener el enlace de descarga.');
+
+        // 4. Construcción de texto segura (Evita el error text.match)
+        const caption = `🎵 *Título:* ${finalTitle}\n👤 *Artista:* ${track.artist || 'N/A'}\n⏱ *Duración:* ${track.duration || 'N/A'}\n🔗 *Link:* ${spotifyUrl}`.trim();
+
+        // 5. Envío de imagen con información
+        // Usamos String() para asegurar que el texto sea válido para Baileys
+        await sock.sendMessage(chatId, {
+            image: { url: finalImage },
+            caption: String(caption) 
+        }, { 
+            quoted: message,
+            // Desactivamos explícitamente el link preview que causa el crash
+            options: { linkPreview: null } 
+        });
+
+        // 6. Envío del audio
+        await sock.sendMessage(chatId, {
+            audio: { url: finalAudio },
+            mimetype: 'audio/mpeg',
+            fileName: `${finalTitle.replace(/[\\/:*?"<>|]/g, '')}.mp3`
+        }, { quoted: message });
+
+    } catch (error) {
+        console.error('[SPOTIFY] error:', error?.message || error);
+        // Fallback simple por si el error de Baileys ocurre en el bloque anterior
+        await sock.sendMessage(chatId, { text: '❌ Error: No se pudo procesar la solicitud.' }, { quoted: message });
+    }
+}
+
+module.exports = spotifyCommand;
