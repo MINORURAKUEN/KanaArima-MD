@@ -14,7 +14,9 @@ const handler = async (m, { conn, client, args, text, command }) => {
         const video = search.videos[0]
         if (!video) throw new Error('No se encontró ningún video.')
 
+        // Detectar si el comando es para video, audio normal o nota de voz
         const isVideo = /play2|mp4|video/i.test(command)
+        const isVoiceNote = /playaudio/i.test(command) // Detecta el nuevo comando
         const type = isVideo ? 'video' : 'audio'
 
         const captionInfo = `╭━━━〔 🎵 YOUTUBE ${isVideo ? 'VIDEO' : 'AUDIO'} 〕━━━⬣
@@ -32,23 +34,24 @@ const handler = async (m, { conn, client, args, text, command }) => {
         const res = await fetch(apiUrl)
         const json = await res.json()
 
-        const downloadUrl = json.data?.download?.url || json.result?.download || json.url
+        const downloadUrl = json.data?.download?.url || json.result?.download || json.url || (json.data && json.data.url)
         if (!downloadUrl) throw new Error('No se pudo obtener el enlace de descarga.')
 
         if (isVideo) {
-            // ENVIAR COMO VIDEO (Sin el texto de "Descargado vía")
+            // ENVIAR COMO VIDEO
             await socket.sendMessage(m.chat, { 
                 video: { url: downloadUrl }, 
-                caption: `🎬 *${video.title}*`, // <--- Línea limpia
+                caption: `🎬 *${video.title}*`,
                 mimetype: 'video/mp4',
                 fileName: `${video.title}.mp4`
             }, { quoted: m })
         } else {
-            // ENVIAR COMO AUDIO
+            // ENVIAR COMO AUDIO (Normal o Nota de Voz dependiendo del comando)
             await socket.sendMessage(m.chat, { 
                 audio: { url: downloadUrl }, 
                 mimetype: 'audio/mpeg',
-                fileName: `${video.title}.mp3`
+                fileName: `${video.title}.mp3`,
+                ptt: isVoiceNote // Si usó .playaudio, esto es 'true' y se envía como nota de voz
             }, { quoted: m })
         }
 
@@ -60,9 +63,10 @@ const handler = async (m, { conn, client, args, text, command }) => {
     }
 }
 
-handler.help = ['play', 'play2', 'mp4', 'mp3', 'video']
+// Se añadió 'playaudio' a la ayuda y a los comandos aceptados
+handler.help = ['play', 'play2', 'playaudio', 'mp4', 'mp3', 'video']
 handler.tags = ['downloader']
-handler.command = /^(play|play2|mp3|video|mp4)$/i
+handler.command = /^(play|play2|mp3|video|mp4|playaudio)$/i
 
 export default handler
-              
+                                                   
