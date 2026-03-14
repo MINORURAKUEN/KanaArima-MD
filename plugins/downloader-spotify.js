@@ -10,20 +10,24 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   if (!text) return m.reply(`${tradutor.texto1} _${usedPrefix + command} Good Feeling - Flo Rida_`);
 
   try {
-    // 1. Buscar la canción (Usando tu API de búsqueda actual)
-    const searchUrl = `https://okatsu-rolezapiiz.vercel.app/search/spotify?q=${encodeURIComponent(text)}`;
+    await m.reply(`*[⏳] Buscando en Spotify: ${text}...*`);
+
+    // 1. Nueva API de Búsqueda (Reemplaza a la que falló con 402)
+    const searchUrl = `https://api.vreden.my.id/api/spotifysearch?query=${encodeURIComponent(text)}`;
     const { data: searchData } = await axios.get(searchUrl);
 
-    if (!searchData?.status || !searchData?.result) {
+    // Validamos que haya resultados
+    if (!searchData?.result || searchData.result.length === 0) {
         return m.reply(tradutor.texto2 || '❌ No se encontraron resultados.');
     }
 
-    const track = searchData.result;
-    const spotifyUrl = track.url; 
+    // Tomamos el primer resultado de la búsqueda
+    const track = searchData.result[0];
+    const spotifyUrl = track.url || track.link; // Diferentes APIs usan .url o .link
 
-    await m.reply(`*[⏳] Descargando de Spotify...*`);
+    if (!spotifyUrl) throw 'No se pudo obtener el enlace de la canción.';
 
-    // 2. Descargar usando la nueva API con tu API Key
+    // 2. Descargar usando la nueva API con tu API Key (apicausas)
     const apiKey = "causa-0e3eacf90ab7be15";
     const downloadApi = `https://rest.apicausas.xyz/api/v1/descargas/spotify?apikey=${apiKey}&url=${encodeURIComponent(spotifyUrl)}`;
     
@@ -32,29 +36,18 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
         const { data: dlRes } = await axios.get(downloadApi);
         if (dlRes?.status && dlRes?.resultado) {
             downloadData = {
-                title: dlRes.resultado.titulo || track.title,
-                artist: dlRes.resultado.artista || track.artist,
-                image: dlRes.resultado.portada || track.thumbnails,
+                title: dlRes.resultado.titulo || track.title || 'Desconocido',
+                artist: dlRes.resultado.artista || track.artist || 'Desconocido',
+                image: dlRes.resultado.portada || track.image || 'https://i.ibb.co/3S7mY8V/spotify.jpg',
                 download: dlRes.resultado.url,
-                duration: track.duration || 'N/A'
+                duration: dlRes.resultado.duracion || track.duration || 'N/A'
             };
         }
     } catch (e) {
         console.error('Error en API apicausas:', e.message);
     }
 
-    // Fallback por si apicausas falla
-    if (!downloadData) {
-        downloadData = {
-            title: track.title,
-            artist: track.artist,
-            image: track.thumbnails,
-            download: track.audio,
-            duration: track.duration
-        };
-    }
-
-    if (!downloadData.download) throw 'No se pudo obtener el audio.';
+    if (!downloadData || !downloadData.download) throw 'Las APIs de descarga están caídas.';
 
     // 3. Texto blindado contra errores de Baileys
     const caption = `🎵 *Título:* ${downloadData.title}\n👤 *Artista:* ${downloadData.artist}\n⏱ *Duración:* ${downloadData.duration}\n🔗 *Link:* ${spotifyUrl}`.trim();
@@ -86,7 +79,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
   } catch (e) {
     console.error(e);
-    m.reply(tradutor.texto3 || '❌ Error inesperado.');
+    m.reply(tradutor.texto3 || '❌ Ocurrió un error al intentar descargar la canción.');
   }
 };
 
@@ -95,3 +88,4 @@ handler.tags = ['downloader'];
 handler.command = ['spotify', 'music'];
 
 export default handler;
+  
