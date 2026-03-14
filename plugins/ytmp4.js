@@ -1,64 +1,91 @@
-/*
-Licencia MIT
-
-Derechos de autor (c) 2023 Arom
-
-Se concede permiso, sin cargo, a cualquier persona que obtenga una copia
-de este software y los archivos de documentación asociados (el "Software"),
-para usar, copiar, modificar, fusionar, publicar, distribuir, sublicenciar
-y/o vender copias del Software, y permitir a las personas a quienes se les 
-proporcione el Software a hacerlo, sujeto a las siguientes condiciones:
-
-El aviso de derechos de autor y esta nota de permiso deben incluirse en todas
-las copias o partes sustanciales del Software.
-
-EL SOFTWARE SE PROPORCIONA "TAL CUAL", SIN GARANTÍA DE NINGÚN TIPO, EXPRESA O 
-IMPLÍCITA, INCLUYENDO PERO NO LIMITADO A GARANTÍAS DE COMERCIALIZACIÓN,
-IDONEIDAD PARA UN PROPÓSITO PARTICULAR E INFRACCIÓN. EN NINGÚN CASO LOS AUTORES 
-O TITULARES DEL COPYRIGHT SERÁN RESPONSABLES DE NINGUNA RECLAMACIÓN, DAÑO U 
-OTRA RESPONSABILIDAD, YA SEA EN UNA ACCIÓN DE CONTRATO, AGRAVIO O DE OTRO TIPO,
-DERIVADA DE, FUERA O EN CONEXIÓN CON EL SOFTWARE O SU USO U OTROS TRATOS EN EL 
-SOFTWARE.
-
-Créditos:
-- Código original: https://github.com/ruhend2001/ruhend-ytmp4
-- Editado por: https://github.com/BrunoSobrino
-*/
-
 import axios from 'axios';
-import { stringify } from 'querystring';
-import cheerio from 'cheerio';
 
-const ytmp44 = async (url) => {
-  const parameters = {
-    'url': url,
-    'format': 'mp4',
-    'lang': 'en'
-  };
+// =========================================================================
+// 1. FUNCIÓN PARA OBTENER EL ENLACE DE LA API (El Motor)
+// =========================================================================
+const obtenerDescargaAPI = async (urlYouTube) => {
+    try {
+        const apikey = 'causa-0e3eacf90ab7be15';
+        // Construimos la URL exacta con los parámetros que me diste
+        const endpoint = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(urlYouTube)}&type=video`;
 
-  try {
-    const conversionResponse = await axios.post('https://s64.notube.net/recover_weight.php', stringify(parameters));
-    if (!conversionResponse.data.token) {
-      throw new Error('No se recibió un token de la respuesta de conversión.');
+        const respuesta = await axios.get(endpoint);
+        const data = respuesta.data;
+
+        // Extraemos la información (ajustado a las respuestas comunes de APIs REST)
+        // Nota: Si la API usa otra estructura exacta, asegúrate de cambiar "data.url" por la correcta.
+        const enlaceDescarga = data.url || (data.data && data.data.url);
+        const titulo = data.title || (data.data && data.data.title) || 'Video_YouTube';
+
+        if (!enlaceDescarga) {
+            return { status: false, error: 'La API no devolvió un enlace de descarga.' };
+        }
+
+        return { 
+            status: true, 
+            titulo: titulo, 
+            enlace: enlaceDescarga 
+        };
+
+    } catch (error) {
+        console.error('Error al conectar con la API de Apicausas:', error.message);
+        return { status: false, error: 'No se pudo conectar con la API.' };
     }
-    const token = conversionResponse.data.token;
-    const downloadPageResponse = await axios.get('https://notube.net/en/download?token=' + token);
-
-    if (downloadPageResponse.status !== 200) {
-      throw new Error('No se pudo recuperar la página de descarga.');
-    }
-
-    const $ = cheerio.load(downloadPageResponse.data);
-    const result = {
-      'titulo': $('#breadcrumbs-section h2').text(),
-      'descargar': $('#breadcrumbs-section #downloadButton').attr('href')
-    };
-
-    return { status: true, resultados: result };
-  } catch (error) {
-    console.error('Error al convertir el video de YouTube:', error);
-    return { status: false, error: error.message };
-  }
 };
 
-export default ytmp44;
+// =========================================================================
+// 2. LÓGICA DE LOS COMANDOS (Integrar en tu manejador de mensajes)
+// =========================================================================
+
+// Asegúrate de que estas variables vengan de tu lector de mensajes del bot
+// const text = msg.message.conversation; (ejemplo)
+// const chatId = msg.key.remoteJid; (ejemplo)
+
+const args = text.trim().split(/ +/);
+const comando = args[0].toLowerCase(); // Ej: ".ytmp4" o ".ytmp4doc"
+const url = args[1];                   // Ej: "https://youtu.be/..."
+
+if (comando === '.ytmp4' || comando === '.ytmp4doc') {
+    
+    // Validar que el usuario haya enviado un enlace
+    if (!url || !url.includes('youtu')) {
+        return responder('❌ Por favor, envía un enlace de YouTube válido.\n*Ejemplo:* ' + comando + ' https://youtu.be/dQw4w9WgXcQ');
+    }
+
+    responder('⏳ Obteniendo el video desde el servidor, por favor espera...');
+
+    // Llamamos a la API
+    const resultado = await obtenerDescargaAPI(url);
+
+    if (!resultado.status) {
+        return responder('❌ Ocurrió un error: ' + resultado.error);
+    }
+
+    try {
+        // Limpiamos el título para evitar problemas en el nombre del archivo
+        const tituloLimpio = resultado.titulo.replace(/[\\/:*?"<>|]/g, ""); 
+
+        // OPCIÓN 1: Enviar como VIDEO (.ytmp4)
+        if (comando === '.ytmp4') {
+            await bot.sendMessage(chatId, { 
+                video: { url: resultado.enlace }, 
+                caption: `🎬 *Título:* ${resultado.titulo}\n🚀 _Descargado vía Apicausas_`,
+                mimetype: 'video/mp4'
+            });
+        } 
+        
+        // OPCIÓN 2: Enviar como DOCUMENTO (.ytmp4doc)
+        else if (comando === '.ytmp4doc') {
+            await bot.sendMessage(chatId, { 
+                document: { url: resultado.enlace }, 
+                fileName: `${tituloLimpio}.mp4`,
+                caption: `📄 *Documento:* ${resultado.titulo}`,
+                mimetype: 'video/mp4'
+            });
+        }
+
+    } catch (err) {
+        console.error('Error al enviar el archivo a WhatsApp:', err);
+        responder('❌ Error al enviar. Es posible que el archivo exceda el límite de peso permitido por WhatsApp.');
+    }
+}
