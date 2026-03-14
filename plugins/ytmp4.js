@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 
-const handler = async (m, { conn, client, args, text, command, usedPrefix }) => {
+const handler = async (m, { conn, client, args, text, command }) => {
     // Compatibilidad de sockets
     const socket = conn || client;
     let url = text || args[0];
@@ -9,15 +9,31 @@ const handler = async (m, { conn, client, args, text, command, usedPrefix }) => 
     const apikey = "causa-0e3eacf90ab7be15";
     
     // Validar si el usuario ingresó un enlace
-    if (!url) return socket.sendMessage(m.chat, { text: `《✧》 Por favor, ingresa un enlace de YouTube válido.\n\n*Ejemplo:* ${usedPrefix + command} https://youtu.be/dQw4w9WgXcQ` }, { quoted: m });
-    if (!url.includes('youtu')) return socket.sendMessage(m.chat, { text: `❌ El enlace proporcionado no parece ser de YouTube.` }, { quoted: m });
+    if (!url) {
+        return socket.sendMessage(m.chat, { 
+            text: `《✧》 Por favor, ingresa un enlace de YouTube válido.` 
+        }, { quoted: m });
+    }
+    
+    if (!url.includes('youtu')) {
+        return socket.sendMessage(m.chat, { 
+            text: `❌ El enlace proporcionado no parece ser de YouTube.` 
+        }, { quoted: m });
+    }
 
     try {
         // Reaccionar con reloj al inicio del proceso
         await socket.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
 
-        // Consultar la API (Añadimos &quality=720p para priorizar esa resolución)
-        const apiUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(url)}&type=video&quality=720p`;
+        // 1. Construir la URL de la API dinámicamente
+        let apiUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(url)}&type=video`;
+        
+        // Si el comando es ytmp4doc, le añadimos el parámetro para forzar 720p
+        if (command === 'ytmp4doc') {
+            apiUrl += `&quality=720p`;
+        }
+
+        // Consultar la API
         const res = await fetch(apiUrl);
         const json = await res.json();
 
@@ -30,20 +46,19 @@ const handler = async (m, { conn, client, args, text, command, usedPrefix }) => 
         // Limpiar el título para el nombre del archivo
         const tituloLimpio = title.replace(/[\\/:*?"<>|]/g, "");
 
-        // Diferenciar entre comando de video normal y documento
+        // 2. Enviar el archivo según el comando
         if (command === 'ytmp4doc') {
-            // ENVIAR COMO DOCUMENTO
+            // ENVIAR COMO DOCUMENTO (Calidad 720p, sin caption)
             await socket.sendMessage(m.chat, { 
                 document: { url: downloadUrl }, 
-                caption: `📄 *${title}*\n\n🎥 _Calidad priorizada: 720p_\n✅ _Descargado vía RestCausas_`,
                 mimetype: 'video/mp4',
                 fileName: `${tituloLimpio}.mp4`
             }, { quoted: m });
         } else {
-            // ENVIAR COMO VIDEO NORMAL
+            // ENVIAR COMO VIDEO NORMAL (Calidad por defecto, solo título en caption)
             await socket.sendMessage(m.chat, { 
                 video: { url: downloadUrl }, 
-                caption: `🎬 *${title}*\n\n🎥 _Calidad priorizada: 720p_\n✅ _Descargado vía RestCausas_`,
+                caption: `🎬 *${title}*`,
                 mimetype: 'video/mp4',
                 fileName: `${tituloLimpio}.mp4`
             }, { quoted: m });
