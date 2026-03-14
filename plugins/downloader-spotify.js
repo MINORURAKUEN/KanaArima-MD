@@ -12,7 +12,7 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
   try {
     // 1. Buscar la canción
     let songInfo = await spotifyxv(text);
-    if (!songInfo.length) return m.reply(tradutor.texto2);
+    if (!songInfo || !songInfo.length) return m.reply(tradutor.texto2);
     let song = songInfo[0];
 
     await m.reply(`*[⏳] Procesando descarga: ${song.name}...*`);
@@ -40,47 +40,61 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
 
     // 3. Fallback a Stellar si la primera falla
     if (!downloadData) {
-      const resFallback = await axios.get(`${global.APIs.stellar}/dow/spotify?url=${song.url}&apikey=${global.APIKeys[global.APIs.stellar]}`);
-      if (resFallback.data?.data?.download) {
-        const dataF = resFallback.data.data;
-        downloadData = {
-          title: dataF.title,
-          artist: dataF.artist,
-          image: dataF.image,
-          download: dataF.download,
-          duration: dataF.duration
-        };
+      try {
+        const resFallback = await axios.get(`${global.APIs.stellar}/dow/spotify?url=${song.url}&apikey=${global.APIKeys[global.APIs.stellar]}`);
+        if (resFallback.data?.data?.download) {
+          const dataF = resFallback.data.data;
+          downloadData = {
+            title: dataF.title,
+            artist: dataF.artist,
+            image: dataF.image,
+            download: dataF.download,
+            duration: dataF.duration
+          };
+        }
+      } catch (e) {
+        console.error('Error en Fallback Stellar:', e.message);
       }
     }
 
     if (!downloadData || !downloadData.download) throw 'No se pudo obtener el enlace de descarga.';
 
-    // 4. Construcción del texto (Asegurando que sea String para evitar el error text.match)
-    let spotifyi = ` _${tradutor.texto2[0]}_\n\n`;
-    spotifyi += ` ${tradutor.texto2[1]} ${downloadData.title}\n`;
-    spotifyi += ` ${tradutor.texto2[2]} ${downloadData.artist}\n`; 
-    spotifyi += ` ${tradutor.texto2[3]} ${song.album || 'N/A'}\n`;
-    spotifyi += ` ${tradutor.texto2[4]} ${downloadData.duration}\n\n`;
-    spotifyi += `> ${tradutor.texto2[5]}`;
+    // 4. Construcción del texto segura
+    // Usamos variables de respaldo por si el traductor falla
+    const txt0 = tradutor.texto2?.[0] || 'Spotify Download';
+    const txt1 = tradutor.texto2?.[1] || 'Título:';
+    const txt2 = tradutor.texto2?.[2] || 'Artista:';
+    const txt3 = tradutor.texto2?.[3] || 'Álbum:';
+    const txt4 = tradutor.texto2?.[4] || 'Duración:';
+    const txt5 = tradutor.texto2?.[5] || 'Descargando audio...';
 
-    // 5. Envío del mensaje con miniatura (Solución al error de Baileys)
+    let spotifyi = ` _${txt0}_\n\n`;
+    spotifyi += ` ${txt1} ${downloadData.title}\n`;
+    spotifyi += ` ${txt2} ${downloadData.artist}\n`; 
+    spotifyi += ` ${txt3} ${song.album || 'N/A'}\n`;
+    spotifyi += ` ${txt4} ${downloadData.duration}\n\n`;
+    spotifyi += `> ${txt5}`;
+
+    // 5. Envío del mensaje con miniatura (SOLUCIÓN DEFINITIVA)
+    // Nos aseguramos de que TODO en contextInfo sea válido
     await conn.sendMessage(m.chat, {
-      text: String(spotifyi.trim()), // Forzamos String aquí
+      text: spotifyi.trim(),
+    }, { 
+      quoted: m,
       contextInfo: {
-        forwardingScore: 9999999,
+        forwardingScore: 99,
         isForwarded: true,
         externalAdReply: {
           showAdAttribution: true,
-          containsAutoReply: true,
           renderLargerThumbnail: true,
-          title: global.titulowm2 || 'Spotify Downloader',
+          title: downloadData.title.slice(0, 40), // Evitamos títulos gigantes
+          body: downloadData.artist.slice(0, 40),
           mediaType: 1,
-          thumbnailUrl: downloadData.image,
-          mediaUrl: song.url,
+          thumbnailUrl: downloadData.image || 'https://i.ibb.co/3S7mY8V/spotify.jpg', 
           sourceUrl: song.url
         }
       }
-    }, { quoted: m });
+    });
 
     // 6. Envío del Audio
     await conn.sendMessage(m.chat, {
@@ -90,8 +104,9 @@ let handler = async (m, { conn, text, usedPrefix, command }) => {
     }, { quoted: m });
 
   } catch (e) {
-    console.error(e);
-    m.reply(`${tradutor.texto3}`);
+    console.error('Error fatal en handler:', e);
+    // Enviar error simple sin externalAdReply para evitar bucles de crash
+    m.reply(tradutor.texto3 || 'Ocurrió un error inesperado.');
   }
 };
 
@@ -106,14 +121,15 @@ async function spotifyxv(query) {
     if (!res.data?.status || !res.data?.data?.length) return [];
     const firstTrack = res.data.data[0];
     return [{
-      name: firstTrack.title,
-      artista: [firstTrack.artist],
-      album: firstTrack.album,
-      duracion: firstTrack.duration,
-      url: firstTrack.url,
+      name: firstTrack.title || 'Unknown',
+      artista: [firstTrack.artist || 'Unknown'],
+      album: firstTrack.album || 'N/A',
+      duracion: firstTrack.duration || 'N/A',
+      url: firstTrack.url || '',
       imagen: firstTrack.image || ''
     }];
   } catch {
     return [];
   }
-}
+      }
+    
