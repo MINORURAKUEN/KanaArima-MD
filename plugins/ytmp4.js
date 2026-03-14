@@ -1,4 +1,10 @@
 import fetch from 'node-fetch';
+import { exec } from 'child_process';
+import fs from 'fs';
+import { promisify } from 'util';
+
+// Convertimos exec en una promesa para poder usar await
+const execPromise = promisify(exec);
 
 const handler = async (m, { conn, client, args, text, command }) => {
     // Compatibilidad de sockets
@@ -25,10 +31,50 @@ const handler = async (m, { conn, client, args, text, command }) => {
         // Reaccionar con reloj al inicio del proceso
         await socket.sendMessage(m.chat, { react: { text: '⏳', key: m.key } });
 
-        // 1. Construir la URL de la API dinámicamente
+        // =======================================================
+        // PLAN A: INTENTAR CON YT-DLP (Solo para documentos)
+        // =======================================================
+        if (command === 'ytmp4doc') {
+            try {
+                // Creamos un nombre de archivo temporal único para evitar cruces
+                const tmpFile = `./tmp_${Date.now()}.mp4`;
+                
+                // 1. Obtener el título usando yt-dlp
+                const { stdout: titleOut } = await execPromise(`yt-dlp --print title "${url}"`);
+                const title = titleOut.trim() || 'Video_YouTube';
+                const tituloLimpio = title.replace(/[\\/:*?"<>|]/g, "");
+
+                // 2. Descargar con yt-dlp forzando formato mp4 y máximo 720p
+                await execPromise(`yt-dlp -f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best" --merge-output-format mp4 -o "${tmpFile}" "${url}"`);
+
+                // 3. Enviar el archivo como documento
+                await socket.sendMessage(m.chat, { 
+                    document: fs.readFileSync(tmpFile), 
+                    mimetype: 'video/mp4',
+                    fileName: `${tituloLimpio}.mp4`
+                }, { quoted: m });
+
+                // 4. Borrar el archivo temporal
+                if (fs.existsSync(tmpFile)) {
+                    fs.unlinkSync(tmpFile);
+                }
+
+                // Reacción de éxito y terminamos la ejecución aquí
+                await socket.sendMessage(m.chat, { react: { text: '✅', key: m.key } });
+                return; 
+
+            } catch (err) {
+                console.log('⚠️ Error con yt-dlp, activando API de respaldo...', err.message);
+                // Si falla (no está instalado, error de descarga, etc.), 
+                // ignoramos el error y dejamos que el código siga hacia el PLAN B.
+            }
+        }
+
+        // =======================================================
+        // PLAN B: RESPALDO CON API (O para el comando .ytmp4)
+        // =======================================================
         let apiUrl = `https://rest.apicausas.xyz/api/v1/descargas/youtube?apikey=${apikey}&url=${encodeURIComponent(url)}&type=video`;
         
-        // Si el comando es ytmp4doc, le añadimos el parámetro para forzar 720p
         if (command === 'ytmp4doc') {
             apiUrl += `&quality=720p`;
         }
@@ -39,28 +85,25 @@ const handler = async (m, { conn, client, args, text, command }) => {
 
         // Extraer enlace de descarga y título
         const downloadUrl = json.data?.download?.url || json.result?.download || json.url || (json.data && json.data.url);
-        const title = json.data?.title || json.title || json.result?.title || 'Video_YouTube';
+        const titleApi = json.data?.title || json.title || json.result?.title || 'Video_YouTube';
         
         if (!downloadUrl) throw new Error('La API no devolvió un enlace de descarga válido.');
 
-        // Limpiar el título para el nombre del archivo
-        const tituloLimpio = title.replace(/[\\/:*?"<>|]/g, "");
+        const tituloLimpioApi = titleApi.replace(/[\\/:*?"<>|]/g, "");
 
-        // 2. Enviar el archivo según el comando
+        // Enviar según el comando
         if (command === 'ytmp4doc') {
-            // ENVIAR COMO DOCUMENTO (Calidad 720p, sin caption)
             await socket.sendMessage(m.chat, { 
                 document: { url: downloadUrl }, 
                 mimetype: 'video/mp4',
-                fileName: `${tituloLimpio}.mp4`
+                fileName: `${tituloLimpioApi}.mp4`
             }, { quoted: m });
         } else {
-            // ENVIAR COMO VIDEO NORMAL (Calidad por defecto, solo título en caption)
             await socket.sendMessage(m.chat, { 
                 video: { url: downloadUrl }, 
-                caption: `🎬 *${title}*`,
+                caption: `🎬 *${titleApi}*`,
                 mimetype: 'video/mp4',
-                fileName: `${tituloLimpio}.mp4`
+                fileName: `${tituloLimpioApi}.mp4`
             }, { quoted: m });
         }
 
@@ -74,7 +117,6 @@ const handler = async (m, { conn, client, args, text, command }) => {
     }
 };
 
-// Configuración de los comandos para el bot
 handler.help = ['ytmp4 <link>', 'ytmp4doc <link>'];
 handler.tags = ['downloader'];
 handler.command = /^(ytmp4|ytmp4doc)$/i;
